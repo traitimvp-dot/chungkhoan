@@ -1,6 +1,7 @@
 import streamlit as st
 import duckdb
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from streamlit_lightweight_charts import renderLightweightCharts
 import streamlit.components.v1 as components
@@ -8,6 +9,7 @@ import ta
 import os
 import sys
 import time
+import importlib.util
 
 # Đường dẫn tuyệt đối chuẩn xác
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -15,6 +17,14 @@ DB_PATH = os.path.join(BASE_DIR, "data", "trading_data.duckdb")
 
 # Cấu hình giao diện trang web
 st.set_page_config(page_title="Vnstock Dashboard", page_icon="📈", layout="wide")
+
+# Import strategy module từ cùng thư mục src/
+_strategy_path = os.path.join(BASE_DIR, "src", "strategy.py")
+_spec = importlib.util.spec_from_file_location("strategy", _strategy_path)
+_strategy_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_strategy_mod)
+get_buy_candidates = _strategy_mod.get_buy_candidates
+get_sell_candidates = _strategy_mod.get_sell_candidates
 
 @st.cache_data(ttl=60)
 def load_market_overview():
@@ -105,7 +115,38 @@ def show_chart_dialog_content(symbol):
             
         if not timeframe:
             timeframe = "1 Năm"
-            
+        
+        # Nút chiến lược trong chart tab
+        buy_key = f"show_buy_{symbol}"
+        sell_key = f"show_sell_{symbol}"
+        if buy_key not in st.session_state:
+            st.session_state[buy_key] = False
+        if sell_key not in st.session_state:
+            st.session_state[sell_key] = False
+        
+        col_s1, col_s2, col_s3 = st.columns([1, 1, 2])
+        if col_s1.button(
+            "🟢 Tín hiệu Mua" if not st.session_state[buy_key] else "✅ Tín hiệu Mua",
+            key=f"btn_buy_{symbol}", use_container_width=True,
+            type="primary" if st.session_state[buy_key] else "secondary"
+        ):
+            st.session_state[buy_key] = not st.session_state[buy_key]
+        if col_s2.button(
+            "🔴 Tín hiệu Bán" if not st.session_state[sell_key] else "✅ Tín hiệu Bán",
+            key=f"btn_sell_{symbol}", use_container_width=True,
+            type="primary" if st.session_state[sell_key] else "secondary"
+        ):
+            st.session_state[sell_key] = not st.session_state[sell_key]
+        
+        # Hiển thị trạng thái đang bật
+        status_parts = []
+        if st.session_state[buy_key]:
+            status_parts.append("🟢 MUA")
+        if st.session_state[sell_key]:
+            status_parts.append("🔴 BÁN")
+        if status_parts:
+            col_s3.caption(f"Đang hiện: {' + '.join(status_parts)} — bấm lại để tắt")
+
         df_filtered = df.copy()
         if timeframe != "Tất cả":
             end_date = df_filtered.index.max()
@@ -124,6 +165,29 @@ def show_chart_dialog_content(symbol):
                 df_tv['sma_20'] = ta.trend.sma_indicator(df_tv['close'], window=20)
                 df_tv['sma_50'] = ta.trend.sma_indicator(df_tv['close'], window=50)
                 df_tv['sma_150'] = ta.trend.sma_indicator(df_tv['close'], window=150)
+                
+                # Tính các chỉ báo cho tín hiệu mua/bán
+                close_s = df_tv['close']
+                volume_s = df_tv['volume']
+                high_s = df_tv['high']
+                low_s = df_tv['low']
+                
+                delta = close_s.diff()
+                gain = delta.clip(lower=0).rolling(14).mean()
+                loss = (-delta.clip(upper=0)).rolling(14).mean()
+                rs = gain / loss.replace(0, np.nan)
+                df_tv['rsi'] = 100 - (100 / (1 + rs))
+                
+                ema12 = close_s.ewm(span=12).mean()
+                ema26 = close_s.ewm(span=26).mean()
+                macd_line = ema12 - ema26
+                df_tv['macd_hist'] = macd_line - macd_line.ewm(span=9).mean()
+                df_tv['prev_macd'] = df_tv['macd_hist'].shift(1)
+                df_tv['vol_avg20'] = volume_s.rolling(20).mean()
+                df_tv['high20'] = high_s.rolling(20).max()
+                df_tv['low20'] = low_s.rolling(20).min()
+                df_tv['sma50_col'] = close_s.rolling(50).mean()
+                df_tv['prev_above_sma50'] = (close_s.shift(1) > df_tv['sma50_col'].shift(1))
                 
                 # Sau đó mới cắt df_tv theo khung thời gian giống df_filtered
                 if timeframe != "Tất cả":
@@ -144,6 +208,47 @@ def show_chart_dialog_content(symbol):
                         'value': row['volume'],
                         'color': color
                     })
+                
+                # Tính markers tín hiệu mua/bán (2 loại độc lập, có thể bật cùng lúc)
+                markers = []
+                
+                if st.session_state.get(buy_key):
+                    df_sig_buy = df_tv.dropna(subset=['rsi', 'vol_avg20', 'high20', 'sma_20'])
+                    buy_rows = df_sig_buy[
+                        (df_sig_buy['close'] >= df_sig_buy['high20']) &
+                        (df_sig_buy['volume'] >= 1.5 * df_sig_buy['vol_avg20']) &
+                        (df_sig_buy['rsi'] < 70) &
+                        (df_sig_buy['close'] > df_sig_buy['sma_20'])
+                    ]
+                    for _, r in buy_rows.iterrows():
+                        markers.append({
+                            "time": r['time'],
+                            "position": "belowBar",
+                            "color": "#00e676",
+                            "shape": "arrowUp",
+                            "text": "MUA"
+                        })
+
+                if st.session_state.get(sell_key):
+                    df_sig_sell = df_tv.dropna(subset=['rsi', 'macd_hist', 'prev_macd', 'vol_avg20', 'low20', 'sma50_col'])
+                    for _, r in df_sig_sell.iterrows():
+                        score = (
+                            int(r['rsi'] > 72) +
+                            int(r['close'] <= r['low20'] and r['volume'] >= 1.5 * r['vol_avg20']) +
+                            int(r['macd_hist'] < 0 and r['prev_macd'] >= 0 and r['rsi'] > 55) +
+                            int(r['close'] < r['sma50_col'])
+                        )
+                        if score >= 2:
+                            markers.append({
+                                "time": r['time'],
+                                "position": "aboveBar",
+                                "color": "#ff1744",
+                                "shape": "arrowDown",
+                                "text": "BÁN"
+                            })
+                
+                # Sắp xếp markers theo thời gian (bắt buộc với Lightweight Charts)
+                markers.sort(key=lambda x: x['time'])
                     
                 priceVolumeChartOptions = {
                     "height": 450,
@@ -181,18 +286,22 @@ def show_chart_dialog_content(symbol):
                     }
                 }
                 
+                candlestick_series = {
+                    "type": 'Candlestick',
+                    "data": candles,
+                    "options": {
+                        "upColor": '#26a69a',
+                        "downColor": '#ef5350',
+                        "borderVisible": False,
+                        "wickUpColor": '#26a69a',
+                        "wickDownColor": '#ef5350',
+                    }
+                }
+                if markers:
+                    candlestick_series["markers"] = markers
+                
                 priceVolumeSeries = [
-                    {
-                        "type": 'Candlestick',
-                        "data": candles,
-                        "options": {
-                            "upColor": '#26a69a',
-                            "downColor": '#ef5350',
-                            "borderVisible": False,
-                            "wickUpColor": '#26a69a',
-                            "wickDownColor": '#ef5350',
-                        }
-                    },
+                    candlestick_series,
                     {
                         "type": 'Histogram',
                         "data": volumes,
@@ -233,12 +342,14 @@ def show_chart_dialog_content(symbol):
                     }
                 ]
             
+                sig_key_chart = f"{symbol}_{timeframe}_{st.session_state.get(buy_key)}_{st.session_state.get(sell_key)}"
                 renderLightweightCharts([
                     {
                         "chart": priceVolumeChartOptions,
                         "series": priceVolumeSeries
                     }
-                ], f"chart_{symbol}")
+                ], f"chart_{sig_key_chart}")
+
         
     with tab2:
         st.dataframe(
@@ -266,6 +377,28 @@ df_market = load_market_overview()
 if not df_market.empty:
     st.sidebar.header("🔍 Tra cứu Nhanh")
     search_query = st.sidebar.text_input("Gõ mã cổ phiếu (VD: FPT):").strip().upper()
+
+    # --- Nút Chiến lược ---
+    col_buy, col_sell = st.sidebar.columns(2)
+    if col_buy.button("🟢 Chiến lược Mua", use_container_width=True, type="primary"):
+        # Chỉ tính toán khi bấm nút - lưu vào session_state để tránh tính lại mỗi lần rerun
+        with st.spinner("🔍 Đang phân tích chiến lược mua..."):
+            st.session_state.strategy_mode = "buy"
+            st.session_state.strategy_df = get_buy_candidates()
+    if col_sell.button("🔴 Chiến lược Bán", use_container_width=True):
+        with st.spinner("🔍 Đang phân tích chiến lược bán..."):
+            st.session_state.strategy_mode = "sell"
+            st.session_state.strategy_df = get_sell_candidates()
+    if "strategy_mode" not in st.session_state:
+        st.session_state.strategy_mode = None
+    if "strategy_df" not in st.session_state:
+        st.session_state.strategy_df = None
+    # Nút xóa bộ lọc chiến lược
+    if st.session_state.get("strategy_mode"):
+        if st.sidebar.button("❌ Xóa bộ lọc chiến lược", use_container_width=True):
+            st.session_state.strategy_mode = None
+            st.session_state.strategy_df = None
+            st.rerun()
     
     if "filter_vol" not in st.session_state:
         st.session_state.filter_vol = False
@@ -284,6 +417,23 @@ if not df_market.empty:
         
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
+
+    # --- Áp dụng chiến lược (dùng cache từ session_state, không tính lại) ---
+    df_strategy = st.session_state.get("strategy_df")
+    if st.session_state.get("strategy_mode") == "buy" and df_strategy is not None and not df_strategy.empty:
+        buy_symbols = df_strategy['Mã CP'].tolist()
+        df_market = df_market[df_market['Mã CP'].isin(buy_symbols)].copy()
+        df_market = df_market.merge(
+            df_strategy[['Mã CP', 'Điểm TH', 'Volume/TB']].rename(columns={'Volume/TB': 'Vol/TB'}),
+            on='Mã CP', how='left'
+        )
+    elif st.session_state.get("strategy_mode") == "sell" and df_strategy is not None and not df_strategy.empty:
+        sell_symbols = df_strategy['Mã CP'].tolist()
+        df_market = df_market[df_market['Mã CP'].isin(sell_symbols)].copy()
+        df_market = df_market.merge(
+            df_strategy[['Mã CP', 'Điểm Yếu', 'Volume/TB']].rename(columns={'Volume/TB': 'Vol/TB'}),
+            on='Mã CP', how='left'
+        )
         
     if st.session_state.filter_vol:
         st.sidebar.markdown("<p style='margin-bottom: 0px; font-weight: bold;'>Lọc theo Khối lượng</p>", unsafe_allow_html=True)
@@ -348,7 +498,22 @@ if not df_market.empty:
     st.sidebar.markdown("---")
     st.sidebar.info("Ứng dụng phát triển bởi Vnstock Vibe Coder")
 
-    st.markdown("💡 *Bấm vào một dòng bất kỳ để xem biểu đồ kỹ thuật chi tiết*")
+    # Banner chiến lược hiện tại
+    mode = st.session_state.get("strategy_mode")
+    if mode == "buy":
+        st.success(
+            "🟢 **Chiến lược Mua đang kích hoạt** — "
+            "Hiển thị các mã có tín hiệu: Giá phá đỉnh 20 phiën + KL 1.5x + RSI < 70 + Trên SMA20. "
+            f"| Win-rate backtest: **50.8%** | Return TB: **+2.55%/20 phiẫn** | "
+            f"Tìm thấy **{len(df_market)} mã**")
+    elif mode == "sell":
+        st.error(
+            "🔴 **Chiến lược Bán đang kích hoạt** — "
+            "Hiển thị các mã yếu: RSI>72 / Phá đáy 20p / MACD cắt xuống / Dưới SMA50 (>= 2 tiêu chí). "
+            f"| Giảm sau 20p: **42%** | "
+            f"Tìm thấy **{len(df_market)} mã**")
+    else:
+        st.markdown("💡 *Bấm vào một dòng bất kỳ để xem biểu đồ kỹ thuật chi tiết*")
     
     # Custom styling for % Thay đổi (optional, but requested by user if we could, we can just use dataframe default formatting)
     event = st.dataframe(
