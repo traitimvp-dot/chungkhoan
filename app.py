@@ -49,6 +49,26 @@ if st.sidebar.button("Làm mới dữ liệu (Refresh)"):
     st.cache_data.clear()
     st.rerun()
 
+st.sidebar.markdown("---")
+
+# Nút cập nhật dữ liệu tự động bị thiếu
+import os
+import time
+is_updating = os.path.exists("update.lock")
+
+if is_updating:
+    st.sidebar.warning("⏳ Đang tải dữ liệu ngầm...")
+    st.sidebar.button("Đang xử lý...", disabled=True, use_container_width=True)
+else:
+    # Nút có màu nổi bật (primary) khi rảnh rỗi
+    if st.sidebar.button("📥 Tải thêm Dữ liệu Cuối ngày", type="primary", use_container_width=True):
+        import subprocess
+        subprocess.Popen(["python", "update_daily.py"])
+        # Chờ 1 chút để script tạo file update.lock
+        time.sleep(1) 
+        # F5 lại giao diện ngay lập tức để chuyển nút sang trạng thái đang chạy
+        st.rerun()
+
 # Lựa chọn loại biểu đồ
 chart_type = st.sidebar.radio("Loại biểu đồ:", ["Đường (Line)", "Nến Nhật (Plotly)", "TradingView (Mượt nhất)"])
 
