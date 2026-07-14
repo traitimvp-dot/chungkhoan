@@ -42,9 +42,12 @@ def load_market_overview():
            round((p.close - p.prev_close_3) / p.prev_close_3 * 100, 2) as "% 3 Ngày",
            round((p.close - p.prev_close_7) / p.prev_close_7 * 100, 2) as "% 7 Ngày",
            round((p.close - p.prev_close_1m) / p.prev_close_1m * 100, 2) as "% 1 Tháng",
-           p.volume as "Khối lượng"
+           p.volume as "Khối lượng",
+           c."Sàn",
+           c."Ngành"
     FROM ordered_prices p
     JOIN latest_dates l ON p.symbol = l.symbol AND p.time = l.latest_time
+    LEFT JOIN company_info c ON p.symbol = c."Mã CP"
     WHERE p.prev_close_1 IS NOT NULL
     ORDER BY p.symbol
     """
@@ -257,8 +260,6 @@ def show_chart_dialog_content(symbol):
 
 # --- PHẦN GIAO DIỆN CHÍNH ---
 
-st.title("📈 Toàn cảnh Thị trường")
-st.markdown("Dữ liệu được lấy từ **Vnstock** và lưu trữ tốc độ cao trên **DuckDB**.")
 
 df_market = load_market_overview()
 
@@ -270,10 +271,16 @@ if not df_market.empty:
         st.session_state.filter_vol = False
     if "filter_pct" not in st.session_state:
         st.session_state.filter_pct = False
+    if "filter_exchange" not in st.session_state:
+        st.session_state.filter_exchange = False
+    if "filter_industry" not in st.session_state:
+        st.session_state.filter_industry = False
 
     with st.sidebar.popover("➕ Thêm điều kiện"):
         st.session_state.filter_vol = st.checkbox("Khối lượng", value=st.session_state.filter_vol)
         st.session_state.filter_pct = st.checkbox("Phần trăm Tăng/Giảm", value=st.session_state.filter_pct)
+        st.session_state.filter_exchange = st.checkbox("Sàn giao dịch", value=st.session_state.filter_exchange)
+        st.session_state.filter_industry = st.checkbox("Ngành", value=st.session_state.filter_industry)
         
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
@@ -303,6 +310,20 @@ if not df_market.empty:
             df_market = df_market[df_market["% Thay đổi"] < pct_val]
         else:
             df_market = df_market[df_market["% Thay đổi"] == pct_val]
+
+    if st.session_state.filter_exchange:
+        st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 10px; font-weight: bold;'>Lọc theo Sàn</p>", unsafe_allow_html=True)
+        exchanges = df_market["Sàn"].dropna().unique().tolist()
+        selected_exchanges = st.sidebar.multiselect("Chọn sàn", exchanges, default=[], key="sel_exchange", label_visibility="collapsed", placeholder="Chọn sàn (Mặc định: Tất cả)")
+        if selected_exchanges:
+            df_market = df_market[df_market["Sàn"].isin(selected_exchanges)]
+
+    if st.session_state.filter_industry:
+        st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 10px; font-weight: bold;'>Lọc theo Ngành</p>", unsafe_allow_html=True)
+        industries = sorted(df_market["Ngành"].dropna().unique().tolist())
+        selected_industries = st.sidebar.multiselect("Chọn ngành", industries, default=[], key="sel_industry", label_visibility="collapsed", placeholder="Chọn ngành (Mặc định: Tất cả)")
+        if selected_industries:
+            df_market = df_market[df_market["Ngành"].isin(selected_industries)]
         
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔄 Cập nhật Dữ liệu")
