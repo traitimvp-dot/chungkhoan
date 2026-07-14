@@ -59,7 +59,15 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🔄 Cập nhật Dữ liệu")
 
 if os.path.exists(os.path.join(BASE_DIR, "scripts", "update.lock")):
-    st.sidebar.button("⏳ Đang tải...", type="secondary", use_container_width=True, disabled=True)
+    try:
+        con2 = duckdb.connect(DB_PATH, read_only=True)
+        q = "SELECT COUNT(*) FROM (SELECT symbol, CAST(MAX(time) AS DATE) as m FROM historical_prices WHERE length(symbol) = 3 GROUP BY symbol) t WHERE m = (SELECT CAST(MAX(time) AS DATE) FROM historical_prices)"
+        updated = con2.execute(q).fetchone()[0]
+        total = con2.execute("SELECT COUNT(DISTINCT symbol) FROM historical_prices WHERE length(symbol) = 3").fetchone()[0]
+        con2.close()
+        st.sidebar.button(f"⏳ Đang tải... ({updated}/{total})", type="secondary", use_container_width=True, disabled=True)
+    except Exception:
+        st.sidebar.button("⏳ Đang tải...", type="secondary", use_container_width=True, disabled=True)
 else:
     if st.sidebar.button("📥 Tải thêm Dữ liệu Cuối ngày", type="primary", use_container_width=True):
         import subprocess

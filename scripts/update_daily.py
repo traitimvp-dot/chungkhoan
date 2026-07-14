@@ -49,6 +49,7 @@ def update_daily():
                 
             start_date_str = next_date.strftime("%Y-%m-%d")
             
+            retries = 0
             while True:
                 try:
                     df = mkt.equity(symbol).ohlcv(start=start_date_str, end=today_str, count=100)
@@ -82,7 +83,12 @@ def update_daily():
                 except BaseException as e:
                     if isinstance(e, KeyboardInterrupt):
                         raise
-                    print(f"Lỗi/Rate limit ở mã {symbol}. Đợi 65s...")
+                    retries += 1
+                    if retries >= 3:
+                        print(f"Bỏ qua mã {symbol} sau 3 lần thử thất bại.")
+                        skipped += 1
+                        break
+                    print(f"Lỗi ở mã {symbol}: {e}. Đợi 65s (Lần {retries}/3)...")
                     time.sleep(65)
                     
         print(f"Hoàn tất! Đã cập nhật thêm {success} mã. Bỏ qua {skipped} mã đã đủ dữ liệu.")
