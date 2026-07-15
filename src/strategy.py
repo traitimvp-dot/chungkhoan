@@ -162,16 +162,20 @@ def _compute_indicators(grp: pd.DataFrame) -> pd.DataFrame:
     return grp
 
 
-def get_buy_candidates(days: int = 3) -> pd.DataFrame:
+def get_buy_candidates(days: int = 3, target_date: str = None) -> pd.DataFrame:
     """
     Trả về danh sách mã có tín hiệu MUA theo chiến lược Breakout 20 ngày trong `days` ngày gần nhất.
     """
     con    = duckdb.connect(DB_PATH, read_only=True)
+    date_filter = f"AND time >= CURRENT_DATE - INTERVAL '{LOOKBACK_DAYS} days'"
+    if target_date:
+        date_filter = f"AND time::DATE BETWEEN CAST('{target_date}' AS DATE) - INTERVAL {LOOKBACK_DAYS} DAYS AND CAST('{target_date}' AS DATE)"
+        
     df_raw = con.execute(f"""
         SELECT symbol, time::DATE as date, close, volume, high, low, open
         FROM historical_prices
         WHERE length(symbol) = 3
-          AND time >= CURRENT_DATE - INTERVAL '{LOOKBACK_DAYS} days'
+          {date_filter}
         ORDER BY symbol, time
     """).df()
     try:
@@ -242,16 +246,20 @@ def get_buy_candidates(days: int = 3) -> pd.DataFrame:
     return df_buy[[c for c in cols if c in df_buy.columns]].reset_index(drop=True)
 
 
-def get_sell_candidates(days: int = 3) -> pd.DataFrame:
+def get_sell_candidates(days: int = 3, target_date: str = None) -> pd.DataFrame:
     """
     Trả về danh sách mã có tín hiệu BÁN theo chiến lược chấm điểm yếu trong `days` ngày gần nhất.
     """
     con    = duckdb.connect(DB_PATH, read_only=True)
+    date_filter = f"AND time >= CURRENT_DATE - INTERVAL '{LOOKBACK_DAYS} days'"
+    if target_date:
+        date_filter = f"AND time::DATE BETWEEN CAST('{target_date}' AS DATE) - INTERVAL {LOOKBACK_DAYS} DAYS AND CAST('{target_date}' AS DATE)"
+        
     df_raw = con.execute(f"""
         SELECT symbol, time::DATE as date, close, volume, high, low, open
         FROM historical_prices
         WHERE length(symbol) = 3
-          AND time >= CURRENT_DATE - INTERVAL '{LOOKBACK_DAYS} days'
+          {date_filter}
         ORDER BY symbol, time
     """).df()
     try:

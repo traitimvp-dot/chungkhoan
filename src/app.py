@@ -9,6 +9,7 @@ import ta
 import os
 import sys
 import time
+import datetime
 import importlib.util
 
 # Đường dẫn tuyệt đối chuẩn xác
@@ -24,13 +25,13 @@ _spec = importlib.util.spec_from_file_location("strategy", _strategy_path)
 _strategy_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_strategy_mod)
 
-@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu MUA trong 3 ngày gần nhất (tốn khoảng 3-5s)...")
-def scan_buy_signals():
-    return _strategy_mod.get_buy_candidates(days=3)
+@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu MUA (tốn khoảng 3-5s)...")
+def scan_buy_signals(target_date: str = None):
+    return _strategy_mod.get_buy_candidates(days=3, target_date=target_date)
 
-@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu BÁN trong 3 ngày gần nhất (tốn khoảng 3-5s)...")
-def scan_sell_signals():
-    return _strategy_mod.get_sell_candidates(days=3)
+@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu BÁN (tốn khoảng 3-5s)...")
+def scan_sell_signals(target_date: str = None):
+    return _strategy_mod.get_sell_candidates(days=3, target_date=target_date)
 
 
 
@@ -385,6 +386,15 @@ def show_chart_dialog_content(symbol):
 
 df_market = load_market_overview()
 
+if "max_date" not in st.session_state:
+    try:
+        con_tmp = duckdb.connect(DB_PATH, read_only=True)
+        max_date_str = con_tmp.execute("SELECT MAX(time::DATE) FROM historical_prices").fetchone()[0]
+        con_tmp.close()
+        st.session_state.max_date = datetime.datetime.strptime(str(max_date_str), "%Y-%m-%d").date()
+    except Exception:
+        st.session_state.max_date = datetime.date.today()
+
 if not df_market.empty:
     st.sidebar.header("🔍 Tra cứu Nhanh")
     search_query = st.sidebar.text_input("Gõ mã cổ phiếu (VD: FPT):", key="search_input").strip().upper()
@@ -403,11 +413,14 @@ if not df_market.empty:
         st.session_state.filter_buy = False
     if "filter_sell" not in st.session_state:
         st.session_state.filter_sell = False
+    if "filter_date" not in st.session_state:
+        st.session_state.filter_date = False
 
     st.sidebar.checkbox("Khối lượng", key="filter_vol")
     st.sidebar.checkbox("Phần trăm Tăng/Giảm", key="filter_pct")
     st.sidebar.checkbox("Sàn giao dịch", key="filter_exchange")
     st.sidebar.checkbox("Ngành", key="filter_industry")
+    st.sidebar.checkbox("Ngày quét tín hiệu", key="filter_date")
     def on_filter_buy_change():
         if st.session_state.filter_buy:
             st.session_state.filter_sell = False
@@ -416,8 +429,8 @@ if not df_market.empty:
         if st.session_state.filter_sell:
             st.session_state.filter_buy = False
             
-    st.sidebar.checkbox("🟢 Tín hiệu MUA (3 ngày)", key="filter_buy", on_change=on_filter_buy_change)
-    st.sidebar.checkbox("🔴 Tín hiệu BÁN (3 ngày)", key="filter_sell", on_change=on_filter_sell_change)
+    st.sidebar.checkbox("Tín hiệu MUA (3 ngày)", key="filter_buy", on_change=on_filter_buy_change)
+    st.sidebar.checkbox("Tín hiệu BÁN (3 ngày)", key="filter_sell", on_change=on_filter_sell_change)
 
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
@@ -464,15 +477,22 @@ if not df_market.empty:
         if selected_industries:
             df_market = df_market[df_market["Ngành"].isin(selected_industries)]
             
+    if st.session_state.filter_date:
+        st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 10px; font-weight: bold;'>Chọn ngày quá khứ</p>", unsafe_allow_html=True)
+        target_date = st.sidebar.date_input("Chọn ngày", value=st.session_state.max_date, max_value=st.session_state.max_date, key="target_date_picker", label_visibility="collapsed")
+        target_date_str = target_date.strftime("%Y-%m-%d")
+    else:
+        target_date_str = None
+            
     if st.session_state.filter_buy:
-        df_buy = scan_buy_signals()
+        df_buy = scan_buy_signals(target_date_str)
         if not df_buy.empty:
             df_market = df_market.merge(df_buy[['Mã CP', 'Ngày Tín hiệu', 'Tín hiệu']].rename(columns={'Ngày Tín hiệu': 'Ngày Mua', 'Tín hiệu': 'TH Mua'}), on='Mã CP', how='inner')
         else:
             df_market = df_market.iloc[0:0]
             
     if st.session_state.filter_sell:
-        df_sell = scan_sell_signals()
+        df_sell = scan_sell_signals(target_date_str)
         if not df_sell.empty:
             df_market = df_market.merge(df_sell[['Mã CP', 'Ngày Tín hiệu', 'Tín hiệu']].rename(columns={'Ngày Tín hiệu': 'Ngày Bán', 'Tín hiệu': 'TH Bán'}), on='Mã CP', how='inner')
         else:
@@ -515,9 +535,9 @@ if not df_market.empty:
         if selected_industries:
             active_filters.append(f"Ngành: {', '.join(selected_industries)}")
     if st.session_state.filter_buy:
-        active_filters.append("Tín hiệu MUA (3 ngày)")
+        active_filters.append(f"Tín hiệu MUA (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu MUA (3 ngày)")
     if st.session_state.filter_sell:
-        active_filters.append("Tín hiệu BÁN (3 ngày)")
+        active_filters.append(f"Tín hiệu BÁN (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu BÁN (3 ngày)")
         
     if active_filters:
         msg = "🔍 **Đang lọc theo:** " + " | ".join(active_filters)
