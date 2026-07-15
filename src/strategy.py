@@ -460,4 +460,4 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str, 
         "win_rate": win_rate
     }
     
-    return {"trades": df_trades, "metrics": metrics}
+    return {"trades": df_trades, "metrics": metrics, "df_chart": df}

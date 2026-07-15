@@ -400,14 +400,165 @@ def show_chart_dialog_content(symbol):
                     st.markdown("---")
                     c1, c2, c3 = st.columns(3)
                     
-                    profit_color = "normal" if m['total_profit_pct'] > 0 else "inverse"
-                    c1.metric("Tổng Tài sản (VNĐ)", f"{m['final_capital']:,.0f}", f"{m['total_profit_pct']:.2f}%", delta_color=profit_color)
+                    c1.metric("Tổng Tài sản (VNĐ)", f"{m['final_capital']:,.0f}", f"{m['total_profit_pct']:.2f}%", delta_color="normal")
                     c2.metric("Số lệnh giao dịch", f"{m['total_trades']}", "")
                     c3.metric("Tỉ lệ Thắng (Win rate)", f"{m['win_rate']:.1f}%", "")
                     
+                    # BIỂU ĐỒ TRỰC QUAN
+                    df_chart = bt_results.get("df_chart")
+                    if df_chart is not None and not df_chart.empty:
+                        st.markdown("#### 📊 Biểu đồ Trực quan")
+                        df_chart['time'] = df_chart['date'].astype(str)
+                        
+                        candles = df_chart[['time', 'open', 'high', 'low', 'close']].to_dict('records')
+                        
+                        if 'sma_20' not in df_chart.columns:
+                            df_chart['sma_20'] = ta.trend.sma_indicator(df_chart['close'], window=20)
+                        if 'sma_50' not in df_chart.columns:
+                            df_chart['sma_50'] = ta.trend.sma_indicator(df_chart['close'], window=50)
+                        if 'sma_150' not in df_chart.columns:
+                            df_chart['sma_150'] = ta.trend.sma_indicator(df_chart['close'], window=150)
+                            
+                        sma_20 = df_chart[['time', 'sma_20']].dropna().rename(columns={'sma_20': 'value'}).to_dict('records')
+                        sma_50 = df_chart[['time', 'sma_50']].dropna().rename(columns={'sma_50': 'value'}).to_dict('records')
+                        sma_150 = df_chart[['time', 'sma_150']].dropna().rename(columns={'sma_150': 'value'}).to_dict('records')
+                        
+                        volumes = []
+                        for _, row in df_chart.iterrows():
+                            color = '#26a69a' if row['close'] >= row['open'] else '#ef5350'
+                            volumes.append({
+                                'time': row['time'],
+                                'value': row['volume'],
+                                'color': color
+                            })
+                            
+                        markers = []
+                        for _, trade in df_trades.iterrows():
+                            buy_date_str = trade['Ngày Mua']
+                            sell_date_str = trade['Ngày Bán']
+                            # Buy marker
+                            markers.append({
+                                "time": buy_date_str,
+                                "position": "belowBar",
+                                "color": "#00e676",
+                                "shape": "arrowUp",
+                                "text": "MUA"
+                            })
+                            # Sell marker
+                            markers.append({
+                                "time": sell_date_str,
+                                "position": "aboveBar",
+                                "color": "#ff5252",
+                                "shape": "arrowDown",
+                                "text": "BÁN"
+                            })
+                            
+                        priceVolumeChartOptions = {
+                            "height": 450,
+                            "rightPriceScale": {
+                                "scaleMargins": {
+                                    "top": 0.1,
+                                    "bottom": 0.25,
+                                },
+                                "borderVisible": False,
+                            },
+                            "overlayPriceScales": {
+                                "scaleMargins": {
+                                    "top": 0.8,
+                                    "bottom": 0,
+                                }
+                            },
+                            "layout": {
+                                "background": {
+                                    "type": 'solid',
+                                    "color": '#131722'
+                                },
+                                "textColor": '#d1d4dc',
+                            },
+                            "grid": {
+                                "vertLines": {
+                                    "color": 'rgba(42, 46, 57, 0)'
+                                },
+                                "horzLines": {
+                                    "color": 'rgba(42, 46, 57, 0.6)'
+                                }
+                            }
+                        }
+                        
+                        candlestick_series = {
+                            "type": 'Candlestick',
+                            "data": candles,
+                            "options": {
+                                "upColor": '#26a69a',
+                                "downColor": '#ef5350',
+                                "borderVisible": False,
+                                "wickUpColor": '#26a69a',
+                                "wickDownColor": '#ef5350',
+                            }
+                        }
+                        if markers:
+                            candlestick_series["markers"] = markers
+                            
+                        priceVolumeSeries = [
+                            candlestick_series,
+                            {
+                                "type": 'Histogram',
+                                "data": volumes,
+                                "options": {"color": '#26a69a', "priceFormat": {"type": 'volume'}, "priceScaleId": ''},
+                                "priceScale": {
+                                    "scaleMargins": {
+                                        "top": 0.8,
+                                        "bottom": 0,
+                                    }
+                                }
+                            },
+                            {
+                                "type": "Line",
+                                "data": sma_20,
+                                "options": {
+                                    "color": "#f39c12",
+                                    "lineWidth": 1,
+                                    "priceLineVisible": False
+                                }
+                            },
+                            {
+                                "type": "Line",
+                                "data": sma_50,
+                                "options": {
+                                    "color": "#3498db",
+                                    "lineWidth": 1,
+                                    "priceLineVisible": False
+                                }
+                            },
+                            {
+                                "type": "Line",
+                                "data": sma_150,
+                                "options": {
+                                    "color": "#9b59b6",
+                                    "lineWidth": 1,
+                                    "priceLineVisible": False
+                                }
+                            }
+                        ]
+                        
+                        renderLightweightCharts([
+                            {
+                                "chart": priceVolumeChartOptions,
+                                "series": priceVolumeSeries
+                            }
+                        ], f"bt_chart_{symbol}")
+                    
                     st.markdown("#### 📜 Lịch sử Giao dịch")
+                    def color_profit_loss(val):
+                        if isinstance(val, (int, float)):
+                            color = '#00e676' if val > 0 else '#ff5252' if val < 0 else 'inherit'
+                            return f'color: {color}'
+                        return ''
+                        
+                    styled_df = df_trades.style.map(color_profit_loss, subset=['Lãi/Lỗ (%)', 'Tiền Lãi/Lỗ'])
+                    
                     st.dataframe(
-                        df_trades, 
+                        styled_df, 
                         use_container_width=True, 
                         hide_index=True,
                         column_config={
