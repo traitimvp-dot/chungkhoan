@@ -376,29 +376,9 @@ df_market = load_market_overview()
 
 if not df_market.empty:
     st.sidebar.header("🔍 Tra cứu Nhanh")
-    search_query = st.sidebar.text_input("Gõ mã cổ phiếu (VD: FPT):").strip().upper()
+    search_query = st.sidebar.text_input("Gõ mã cổ phiếu (VD: FPT):", key="search_input").strip().upper()
 
-    # --- Nút Chiến lược ---
-    col_buy, col_sell = st.sidebar.columns(2)
-    if col_buy.button("🟢 Chiến lược Mua", use_container_width=True, type="primary"):
-        # Chỉ tính toán khi bấm nút - lưu vào session_state để tránh tính lại mỗi lần rerun
-        with st.spinner("🔍 Đang phân tích chiến lược mua..."):
-            st.session_state.strategy_mode = "buy"
-            st.session_state.strategy_df = get_buy_candidates()
-    if col_sell.button("🔴 Chiến lược Bán", use_container_width=True):
-        with st.spinner("🔍 Đang phân tích chiến lược bán..."):
-            st.session_state.strategy_mode = "sell"
-            st.session_state.strategy_df = get_sell_candidates()
-    if "strategy_mode" not in st.session_state:
-        st.session_state.strategy_mode = None
-    if "strategy_df" not in st.session_state:
-        st.session_state.strategy_df = None
-    # Nút xóa bộ lọc chiến lược
-    if st.session_state.get("strategy_mode"):
-        if st.sidebar.button("❌ Xóa bộ lọc chiến lược", use_container_width=True):
-            st.session_state.strategy_mode = None
-            st.session_state.strategy_df = None
-            st.rerun()
+
     
     if "filter_vol" not in st.session_state:
         st.session_state.filter_vol = False
@@ -415,25 +395,27 @@ if not df_market.empty:
         st.session_state.filter_exchange = st.checkbox("Sàn giao dịch", value=st.session_state.filter_exchange)
         st.session_state.filter_industry = st.checkbox("Ngành", value=st.session_state.filter_industry)
         
+    has_active_filters = (
+        st.session_state.filter_vol or 
+        st.session_state.filter_pct or 
+        st.session_state.filter_exchange or 
+        st.session_state.filter_industry or 
+        search_query != ""
+    )
+    
+    if has_active_filters:
+        if st.sidebar.button("❌ Bỏ tất cả điều kiện lọc", use_container_width=True):
+            st.session_state.filter_vol = False
+            st.session_state.filter_pct = False
+            st.session_state.filter_exchange = False
+            st.session_state.filter_industry = False
+            if "search_input" in st.session_state:
+                st.session_state.search_input = ""
+            st.rerun()
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
 
-    # --- Áp dụng chiến lược (dùng cache từ session_state, không tính lại) ---
-    df_strategy = st.session_state.get("strategy_df")
-    if st.session_state.get("strategy_mode") == "buy" and df_strategy is not None and not df_strategy.empty:
-        buy_symbols = df_strategy['Mã CP'].tolist()
-        df_market = df_market[df_market['Mã CP'].isin(buy_symbols)].copy()
-        df_market = df_market.merge(
-            df_strategy[['Mã CP', 'Điểm TH', 'Volume/TB']].rename(columns={'Volume/TB': 'Vol/TB'}),
-            on='Mã CP', how='left'
-        )
-    elif st.session_state.get("strategy_mode") == "sell" and df_strategy is not None and not df_strategy.empty:
-        sell_symbols = df_strategy['Mã CP'].tolist()
-        df_market = df_market[df_market['Mã CP'].isin(sell_symbols)].copy()
-        df_market = df_market.merge(
-            df_strategy[['Mã CP', 'Điểm Yếu', 'Volume/TB']].rename(columns={'Volume/TB': 'Vol/TB'}),
-            on='Mã CP', how='left'
-        )
+
         
     if st.session_state.filter_vol:
         st.sidebar.markdown("<p style='margin-bottom: 0px; font-weight: bold;'>Lọc theo Khối lượng</p>", unsafe_allow_html=True)
