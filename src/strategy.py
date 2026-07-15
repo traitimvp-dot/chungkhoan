@@ -135,7 +135,18 @@ def _compute_indicators(grp: pd.DataFrame) -> pd.DataFrame:
     grp['rsi'] = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
 
     # ── Volume ────────────────────────────────────────────────────────
+
     grp['vol_avg20'] = volume.rolling(20).mean()
+
+    # Thêm các chỉ báo cho logic Breakdown/Breakout đơn giản
+    grp['high20'] = grp['high'].rolling(20).max()
+    grp['low20']  = grp['low'].rolling(20).min()
+    ema12 = close.ewm(span=12).mean()
+    ema26 = close.ewm(span=26).mean()
+    macd_line = ema12 - ema26
+    grp['macd_hist'] = macd_line - macd_line.ewm(span=9).mean()
+    grp['prev_macd'] = grp['macd_hist'].shift(1)
+
 
     # ── MA Score: số điều kiện MA tích cực (0-6) ─────────────────────
     # Backtest: Score=6 → Ret20=+2.5%, Score=5 → +2.0%, Score<4 → <+1.5%
@@ -151,14 +162,9 @@ def _compute_indicators(grp: pd.DataFrame) -> pd.DataFrame:
     return grp
 
 
-def get_buy_candidates() -> pd.DataFrame:
+def get_buy_candidates(days: int = 3) -> pd.DataFrame:
     """
-    Trả về danh sách mã có tín hiệu MUA theo chiến lược MA 3 lớp.
-
-    Ưu tiên 3 kịch bản tốt nhất từ backtest:
-      A) Pullback về MA20/MA50 trong uptrend (Win20=54.8%)
-      B) Golden Cross nhỏ + momentum (Win20=55.2%, Ret20=+3.3%)
-      C) Full Bull Confirmation: P>MA20>MA50>MA200 + all slope up + vol cao (Win20=52.7%)
+    Trả về danh sách mã có tín hiệu MUA theo chiến lược Breakout 20 ngày trong `days` ngày gần nhất.
     """
     con    = duckdb.connect(DB_PATH, read_only=True)
     df_raw = con.execute(f"""
@@ -178,157 +184,67 @@ def get_buy_candidates() -> pd.DataFrame:
 
     for symbol, grp in df_raw.groupby('symbol'):
         grp = grp.sort_values('date').reset_index(drop=True)
-        if len(grp) < 205:          # Cần đủ dữ liệu để tính MA200 (~200 phiên)
+        if len(grp) < 50:
             continue
 
         grp = _compute_indicators(grp)
-        grp = grp.dropna(subset=['ma200', 'rsi', 'slope_ma50', 'spread_20_50'])
-        if len(grp) < 2:
+        grp = grp.dropna(subset=['rsi', 'vol_avg20', 'high20', 'ma20'])
+        
+        check_days = min(days, len(grp))
+        if check_days < 1:
             continue
+            
+        for offset in range(-1, -check_days - 1, -1):
+            row = grp.iloc[offset]
+            close    = row['close']
+            ma20     = row['ma20']
+            vol      = row['volume']
+            vol_avg  = row['vol_avg20'] if row['vol_avg20'] > 0 else 1
+            vol_ratio = vol / vol_avg
+            rsi      = row['rsi']
+            high20   = row['high20']
 
-        row      = grp.iloc[-1]
-        close    = row['close']
-        ma20     = row['ma20']
-        ma50     = row['ma50']
-        ma200    = row['ma200']
-        dist20   = row['dist_ma20']
-        dist50   = row['dist_ma50']
-        slope20  = row['slope_ma20']
-        slope50  = row['slope_ma50']
-        slope200 = row['slope_ma200']
-        spread   = row['spread_20_50']
-        spread_prev = row['spread_20_50_prev']
-        vol      = row['volume']
-        vol_avg  = row['vol_avg20'] if row['vol_avg20'] > 0 else 1
-        vol_ratio = vol / vol_avg
-        rsi      = row['rsi']
-        gc_small = row['golden_cross_small']
-        gc_big   = row['golden_cross_big']
-        ma_score = row['ma_score']
+            if (close >= high20) and (vol_ratio >= 1.5) and (rsi < 70) and (close > ma20):
+                prev_idx = offset - 1
+                if abs(prev_idx) <= len(grp):
+                    prev = grp.iloc[prev_idx]
+                    pct_1d = (close - prev['close']) / prev['close'] * 100
+                else:
+                    pct_1d = 0
+                    
+                prev_1m_idx = offset - 22
+                if abs(prev_1m_idx) <= len(grp):
+                    pct_1m = (close / grp.iloc[prev_1m_idx]['close'] - 1) * 100
+                else:
+                    pct_1m = 0
 
-        # Các cờ vị trí
-        above_ma20  = close > ma20
-        above_ma50  = close > ma50
-        above_ma200 = close > ma200
-
-        # Các cờ slope
-        all_slope_up = (slope20 > 0) and (slope50 > 0) and (slope200 > 0)
-        slope50_up   = slope50 > 0
-        spread_expanding = spread > spread_prev  # Momentum đang tăng
-
-        # Khoảng cách giá gần MA (pullback)
-        near_ma20 = -0.02 <= dist20 <= 0.03   # Trong vùng ±2% quanh MA20
-        near_ma50 = -0.02 <= dist50 <= 0.03   # Trong vùng ±2% quanh MA50
-
-        # ══════════════════════════════════════════════════════════════
-        # TÍN HIỆU A: Pullback về MA20 trong Uptrend
-        # Điều kiện: chạm MA20 + vẫn trên MA50 + MA200 + MA50 tăng + Vol tăng
-        # Backtest: Win20=54.1%, Ret20=+2.4%
-        # ══════════════════════════════════════════════════════════════
-        signal_a = (
-            near_ma20 and
-            above_ma50 and
-            above_ma200 and
-            slope50_up and
-            vol_ratio >= 1.2
-        )
-
-        # ══════════════════════════════════════════════════════════════
-        # TÍN HIỆU A2: Pullback về MA50 trong Uptrend (sâu hơn)
-        # Điều kiện: chạm MA50 + trên MA200 + MA50 đang tăng + Vol tăng
-        # Backtest: Win20=54.8%, Ret20=+2.3%
-        # ══════════════════════════════════════════════════════════════
-        signal_a2 = (
-            near_ma50 and
-            above_ma200 and
-            slope50_up and
-            vol_ratio >= 1.2
-        )
-
-        # ══════════════════════════════════════════════════════════════
-        # TÍN HIỆU B: Golden Cross nhỏ (MA20 cắt lên MA50) + Momentum
-        # Điều kiện: vừa golden cross + MA50 tăng + Vol >= 1.2x
-        # Backtest: Win20=55.2%, Ret20=+3.3% (N=1,311)
-        # ══════════════════════════════════════════════════════════════
-        signal_b = (
-            gc_small and
-            slope50_up and
-            vol_ratio >= 1.2
-        )
-
-        # ══════════════════════════════════════════════════════════════
-        # TÍN HIỆU C: Full Bull Confirmation
-        # Điều kiện: P>MA20>MA50>MA200 + all 3 MA slope dương + spread mở + Vol cao
-        # Backtest: Win20=52.7%, Ret20=+3.09%
-        # ══════════════════════════════════════════════════════════════
-        signal_c = (
-            above_ma20 and above_ma50 and above_ma200 and
-            all_slope_up and
-            spread_expanding and
-            vol_ratio >= 1.5
-        )
-
-        # ── Tính điểm tổng hợp ────────────────────────────────────────
-        signal_type = None
-        base_score  = 0
-
-        if signal_b:
-            signal_type = "B: Golden Cross"
-            base_score = 6
-        elif signal_a or signal_a2:
-            signal_type = "A: Pullback MA20" if signal_a else "A2: Pullback MA50"
-            base_score = 5
-        elif signal_c:
-            signal_type = "C: Full Bull"
-            base_score = 4
-        else:
-            continue
-
-        # Điểm thưởng từ MA Score
-        bonus = ma_score  # 0-6
-        final_score = base_score + bonus
-
-        # Tính % thay đổi
-        prev = grp.iloc[-2]
-        pct_1d = (close - prev['close']) / prev['close'] * 100 if len(grp) >= 2 else 0
-        pct_1m = (close / grp.iloc[-22]['close'] - 1) * 100 if len(grp) >= 22 else 0
-
-        candidates.append({
-            'Mã CP':      symbol,
-            'Giá':        close,
-            'Tín hiệu':   signal_type,
-            '% Hôm nay':  round(pct_1d, 2),
-            '% 1 Tháng':  round(pct_1m, 2),
-            'MA Score':   int(ma_score),
-            'RSI':        round(rsi, 1),
-            'Vol/TB':     round(vol_ratio, 2),
-            'Dist MA20':  f"{dist20*100:+.1f}%",
-            'Dist MA50':  f"{dist50*100:+.1f}%",
-            'Điểm TH':   final_score,
-        })
+                candidates.append({
+                    'Mã CP':      symbol,
+                    'Ngày Tín hiệu': row['date'].strftime('%d/%m/%Y'),
+                    'Giá':        close,
+                    'Tín hiệu':   "MUA (Breakout)",
+                    '% Hôm nay':  round(pct_1d, 2),
+                    '% 1 Tháng':  round(pct_1m, 2),
+                    'RSI':        round(rsi, 1),
+                    'Vol/TB':     round(vol_ratio, 2),
+                })
+                break 
 
     df_buy = pd.DataFrame(candidates)
     if df_buy.empty:
         return df_buy
 
     df_buy = df_buy.merge(df_info[['Mã CP', 'Sàn', 'Ngành']], on='Mã CP', how='left')
-    df_buy = df_buy.sort_values(['Điểm TH', '% 1 Tháng'], ascending=[False, False])
+    df_buy = df_buy.sort_values(['% Hôm nay'], ascending=[False])
 
-    cols = ['Mã CP', 'Giá', 'Tín hiệu', '% Hôm nay', '% 1 Tháng',
-            'MA Score', 'RSI', 'Vol/TB', 'Dist MA20', 'Dist MA50', 'Điểm TH', 'Sàn', 'Ngành']
+    cols = ['Mã CP', 'Ngày Tín hiệu', 'Giá', 'Tín hiệu', '% Hôm nay', '% 1 Tháng',
+            'RSI', 'Vol/TB', 'Sàn', 'Ngành']
     return df_buy[[c for c in cols if c in df_buy.columns]].reset_index(drop=True)
 
 
-def get_sell_candidates() -> pd.DataFrame:
+def get_sell_candidates(days: int = 3) -> pd.DataFrame:
     """
-    Trả về danh sách mã có tín hiệu BÁN theo chiến lược MA 3 lớp.
-
-    Phát hiện từ backtest:
-    - Không có combo nào cho P(giảm) > 50% — thị trường VN bullish bias.
-    - Tín hiệu bán đáng tin nhất: MA đảo chiều + volume xác nhận.
-    - BÁN sớm (cảnh báo): spread MA20-MA50 thu hẹp + RSI cao.
-    - BÁN muộn (xác nhận): cắt xuống MA50/MA200 kèm volume.
-    Cần >= 2/4 điều kiện để hiện tín hiệu bán.
+    Trả về danh sách mã có tín hiệu BÁN theo chiến lược chấm điểm yếu trong `days` ngày gần nhất.
     """
     con    = duckdb.connect(DB_PATH, read_only=True)
     df_raw = con.execute(f"""
@@ -348,109 +264,68 @@ def get_sell_candidates() -> pd.DataFrame:
 
     for symbol, grp in df_raw.groupby('symbol'):
         grp = grp.sort_values('date').reset_index(drop=True)
-        if len(grp) < 210:
+        if len(grp) < 50:
             continue
 
         grp = _compute_indicators(grp)
-        grp = grp.dropna(subset=['ma200', 'rsi', 'slope_ma50'])
-        if len(grp) < 6:
+        grp = grp.dropna(subset=['rsi', 'macd_hist', 'prev_macd', 'vol_avg20', 'low20', 'ma50'])
+        
+        check_days = min(days, len(grp))
+        if check_days < 1:
             continue
+            
+        for offset in range(-1, -check_days - 1, -1):
+            row = grp.iloc[offset]
+            close    = row['close']
+            ma50     = row['ma50']
+            vol      = row['volume']
+            vol_avg  = row['vol_avg20'] if row['vol_avg20'] > 0 else 1
+            vol_ratio = vol / vol_avg
+            rsi      = row['rsi']
+            low20    = row['low20']
+            macd_h   = row['macd_hist']
+            p_macd   = row['prev_macd']
 
-        row      = grp.iloc[-1]
-        close    = row['close']
-        ma20     = row['ma20']
-        ma50     = row['ma50']
-        ma200    = row['ma200']
-        slope20  = row['slope_ma20']
-        slope50  = row['slope_ma50']
-        spread   = row['spread_20_50']
-        spread_prev = row['spread_20_50_prev']
-        vol      = row['volume']
-        vol_avg  = row['vol_avg20'] if row['vol_avg20'] > 0 else 1
-        vol_ratio = vol / vol_avg
-        rsi      = row['rsi']
-        death_cross = row['death_cross_small']
-        p_cross_ma20_dn = row['price_cross_ma20_dn']
-        p_cross_ma50_dn = row['price_cross_ma50_dn']
+            score = (
+                int(rsi > 72) +
+                int(close <= low20 and vol_ratio >= 1.5) +
+                int(macd_h < 0 and p_macd >= 0 and rsi > 55) +
+                int(close < ma50)
+            )
 
-        above_ma20  = close > ma20
-        above_ma50  = close > ma50
-        above_ma200 = close > ma200
+            if score >= 2:
+                prev_idx = offset - 1
+                if abs(prev_idx) <= len(grp):
+                    prev = grp.iloc[prev_idx]
+                    pct_1d = (close - prev['close']) / prev['close'] * 100
+                else:
+                    pct_1d = 0
+                    
+                prev_1m_idx = offset - 22
+                if abs(prev_1m_idx) <= len(grp):
+                    pct_1m = (close / grp.iloc[prev_1m_idx]['close'] - 1) * 100
+                else:
+                    pct_1m = 0
 
-        # ── Tiêu chí BÁN (mỗi tiêu chí = 1 điểm) ─────────────────────────
-
-        # [1] Spread thu hẹp + RSI > 72 + slope MA20 giảm
-        #     Backtest: Full Bull nhưng spread shrink + RSI>72 → Giam20=41.6%
-        #     Đây là "cảnh báo sớm" — momentum đang suy yếu trước khi giá giảm
-        cond_spread_warn = (
-            above_ma20 and above_ma50 and
-            (spread < spread_prev) and   # Spread đang thu hẹp
-            (rsi > 72) and
-            (slope20 < 0)                # MA20 bắt đầu quay đầu
-        )
-
-        # [2] Price cắt xuống MA20 + dưới MA50 + Volume > 1.3x
-        #     Backtest: Giam20=44.4%, phổ biến và đáng tin khi có volume xác nhận
-        cond_ma20_break = (
-            p_cross_ma20_dn and
-            not above_ma50 and
-            vol_ratio >= 1.3
-        )
-
-        # [3] Price cắt xuống MA50 + MA50 đang giảm + dưới MA200
-        #     Backtest: Giam20=46.0% — tín hiệu BÁN mạnh nhất
-        cond_ma50_break = (
-            p_cross_ma50_dn and
-            (slope50 < 0) and
-            not above_ma200
-        )
-
-        # [4] Full Bear: P < MA20 < MA50 + cả 2 slope âm + Volume tăng
-        #     Backtest: Giam20=45.5% — xu hướng giảm có xác nhận
-        cond_full_bear = (
-            not above_ma20 and
-            not above_ma50 and
-            (slope20 < 0) and (slope50 < 0) and
-            vol_ratio >= 1.3
-        )
-
-        sell_score = sum([cond_spread_warn, cond_ma20_break, cond_ma50_break, cond_full_bear])
-
-        if sell_score >= 2:
-            prev = grp.iloc[-2]
-            pct_1d = (close - prev['close']) / prev['close'] * 100 if len(grp) >= 2 else 0
-            pct_1m = (close / grp.iloc[-22]['close'] - 1) * 100 if len(grp) >= 22 else 0
-
-            # Xác định loại tín hiệu bán
-            if cond_spread_warn:
-                sig_type = "Cảnh báo (spread thu hẹp)"
-            elif cond_ma50_break:
-                sig_type = "Phá MA50 (bán mạnh)"
-            elif cond_full_bear:
-                sig_type = "Full Bear"
-            else:
-                sig_type = "Phá MA20"
-
-            candidates.append({
-                'Mã CP':     symbol,
-                'Giá':       close,
-                'Tín hiệu':  sig_type,
-                '% Hôm nay': round(pct_1d, 2),
-                '% 1 Tháng': round(pct_1m, 2),
-                'RSI':       round(rsi, 1),
-                'Vol/TB':    round(vol_ratio, 2),
-                'Dist MA50': f"{(close/ma50-1)*100:+.1f}%",
-                'MA Score':  int(row['ma_score']),
-                'Điểm Yếu': sell_score,
-            })
+                candidates.append({
+                    'Mã CP':     symbol,
+                    'Ngày Tín hiệu': row['date'].strftime('%d/%m/%Y'),
+                    'Giá':       close,
+                    'Tín hiệu':  f"BÁN ({score}/4)",
+                    '% Hôm nay': round(pct_1d, 2),
+                    '% 1 Tháng': round(pct_1m, 2),
+                    'RSI':       round(rsi, 1),
+                    'Vol/TB':    round(vol_ratio, 2),
+                })
+                break
 
     df_sell = pd.DataFrame(candidates)
     if df_sell.empty:
         return df_sell
 
     df_sell = df_sell.merge(df_info[['Mã CP', 'Sàn', 'Ngành']], on='Mã CP', how='left')
-    df_sell = df_sell.sort_values(['Điểm Yếu', '% 1 Tháng'], ascending=[False, True])
+    df_sell = df_sell.sort_values(['% Hôm nay'], ascending=[True])
 
-    cols = ['Mã CP', 'Giá', 'Tín hiệu', '% Hôm nay', '% 1 Tháng',
-            'RSI', 'Vol/TB', 'Dist MA50', 'MA Score', 'Điểm Yếu', 'Sàn', 'Ngành']
+    cols = ['Mã CP', 'Ngày Tín hiệu', 'Giá', 'Tín hiệu', '% Hôm nay', '% 1 Tháng',
+            'RSI', 'Vol/TB', 'Sàn', 'Ngành']
     return df_sell[[c for c in cols if c in df_sell.columns]].reset_index(drop=True)

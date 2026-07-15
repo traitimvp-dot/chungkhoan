@@ -23,6 +23,17 @@ _strategy_path = os.path.join(BASE_DIR, "src", "strategy.py")
 _spec = importlib.util.spec_from_file_location("strategy", _strategy_path)
 _strategy_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_strategy_mod)
+
+@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu MUA trong 3 ngày gần nhất (tốn khoảng 3-5s)...")
+def scan_buy_signals():
+    return _strategy_mod.get_buy_candidates(days=3)
+
+@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu BÁN trong 3 ngày gần nhất (tốn khoảng 3-5s)...")
+def scan_sell_signals():
+    return _strategy_mod.get_sell_candidates(days=3)
+
+
+
 get_buy_candidates = _strategy_mod.get_buy_candidates
 get_sell_candidates = _strategy_mod.get_sell_candidates
 
@@ -388,12 +399,17 @@ if not df_market.empty:
         st.session_state.filter_exchange = False
     if "filter_industry" not in st.session_state:
         st.session_state.filter_industry = False
+    if "filter_buy" not in st.session_state:
+        st.session_state.filter_buy = False
+    if "filter_sell" not in st.session_state:
+        st.session_state.filter_sell = False
 
     st.sidebar.checkbox("Khối lượng", key="filter_vol")
     st.sidebar.checkbox("Phần trăm Tăng/Giảm", key="filter_pct")
     st.sidebar.checkbox("Sàn giao dịch", key="filter_exchange")
     st.sidebar.checkbox("Ngành", key="filter_industry")
-        
+    st.sidebar.checkbox("🟢 Tín hiệu MUA (3 ngày)", key="filter_buy")
+    st.sidebar.checkbox("🔴 Tín hiệu BÁN (3 ngày)", key="filter_sell")
 
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
@@ -439,6 +455,20 @@ if not df_market.empty:
         selected_industries = st.sidebar.multiselect("Chọn ngành", industries, default=[], key="sel_industry", label_visibility="collapsed", placeholder="Chọn ngành (Mặc định: Tất cả)")
         if selected_industries:
             df_market = df_market[df_market["Ngành"].isin(selected_industries)]
+            
+    if st.session_state.filter_buy:
+        df_buy = scan_buy_signals()
+        if not df_buy.empty:
+            df_market = df_market.merge(df_buy[['Mã CP', 'Ngày Tín hiệu', 'Tín hiệu']].rename(columns={'Ngày Tín hiệu': 'Ngày Mua', 'Tín hiệu': 'TH Mua'}), on='Mã CP', how='inner')
+        else:
+            df_market = df_market.iloc[0:0]
+            
+    if st.session_state.filter_sell:
+        df_sell = scan_sell_signals()
+        if not df_sell.empty:
+            df_market = df_market.merge(df_sell[['Mã CP', 'Ngày Tín hiệu', 'Tín hiệu']].rename(columns={'Ngày Tín hiệu': 'Ngày Bán', 'Tín hiệu': 'TH Bán'}), on='Mã CP', how='inner')
+        else:
+            df_market = df_market.iloc[0:0]
         
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔄 Cập nhật Dữ liệu")
