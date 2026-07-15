@@ -136,15 +136,25 @@ def show_chart_dialog_content(symbol):
         if sell_key not in st.session_state:
             st.session_state[sell_key] = False
         
-        col_s1, col_s2, col_s3 = st.columns([1, 1, 2])
+        st.markdown('''<style>
+        div[data-testid="stButton"] button {
+            padding: 0.2rem 0.5rem;
+            min-height: 32px;
+            height: 32px;
+            font-size: 14px;
+        }
+        </style>''', unsafe_allow_html=True)
+        col_label, col_s1, col_s2, col_s3 = st.columns([1.4, 0.8, 0.8, 2.0])
+        col_label.markdown("<div style='padding-top: 8px; font-weight: 600; color: #f39c12;'>🎯 Phương pháp 1:</div>", unsafe_allow_html=True)
+        
         if col_s1.button(
-            "🟢 Tín hiệu Mua" if not st.session_state[buy_key] else "✅ Tín hiệu Mua",
+            "🟢 Mua" if not st.session_state[buy_key] else "✅ Mua",
             key=f"btn_buy_{symbol}", use_container_width=True,
             type="primary" if st.session_state[buy_key] else "secondary"
         ):
             st.session_state[buy_key] = not st.session_state[buy_key]
         if col_s2.button(
-            "🔴 Tín hiệu Bán" if not st.session_state[sell_key] else "✅ Tín hiệu Bán",
+            "🔴 Bán" if not st.session_state[sell_key] else "✅ Bán",
             key=f"btn_sell_{symbol}", use_container_width=True,
             type="primary" if st.session_state[sell_key] else "secondary"
         ):
@@ -157,7 +167,7 @@ def show_chart_dialog_content(symbol):
         if st.session_state[sell_key]:
             status_parts.append("🔴 BÁN")
         if status_parts:
-            col_s3.caption(f"Đang hiện: {' + '.join(status_parts)} — bấm lại để tắt")
+            col_s3.caption(f"<div style='padding-top: 12px; font-size: 13px;'>Đang hiện: {' + '.join(status_parts)}</div>", unsafe_allow_html=True)
 
         df_filtered = df.copy()
         if timeframe != "Tất cả":
