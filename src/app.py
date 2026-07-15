@@ -408,8 +408,16 @@ if not df_market.empty:
     st.sidebar.checkbox("Phần trăm Tăng/Giảm", key="filter_pct")
     st.sidebar.checkbox("Sàn giao dịch", key="filter_exchange")
     st.sidebar.checkbox("Ngành", key="filter_industry")
-    st.sidebar.checkbox("🟢 Tín hiệu MUA (3 ngày)", key="filter_buy")
-    st.sidebar.checkbox("🔴 Tín hiệu BÁN (3 ngày)", key="filter_sell")
+    def on_filter_buy_change():
+        if st.session_state.filter_buy:
+            st.session_state.filter_sell = False
+            
+    def on_filter_sell_change():
+        if st.session_state.filter_sell:
+            st.session_state.filter_buy = False
+            
+    st.sidebar.checkbox("🟢 Tín hiệu MUA (3 ngày)", key="filter_buy", on_change=on_filter_buy_change)
+    st.sidebar.checkbox("🔴 Tín hiệu BÁN (3 ngày)", key="filter_sell", on_change=on_filter_sell_change)
 
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
