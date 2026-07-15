@@ -493,20 +493,31 @@ if not df_market.empty:
     st.sidebar.markdown("---")
     st.sidebar.info("Ứng dụng phát triển bởi Vnstock Vibe Coder")
 
-    # Banner chiến lược hiện tại
-    mode = st.session_state.get("strategy_mode")
-    if mode == "buy":
-        st.success(
-            "🟢 **Chiến lược Mua đang kích hoạt** — "
-            "Hiển thị các mã có tín hiệu: Giá phá đỉnh 20 phiën + KL 1.5x + RSI < 70 + Trên SMA20. "
-            f"| Win-rate backtest: **50.8%** | Return TB: **+2.55%/20 phiẫn** | "
-            f"Tìm thấy **{len(df_market)} mã**")
-    elif mode == "sell":
-        st.error(
-            "🔴 **Chiến lược Bán đang kích hoạt** — "
-            "Hiển thị các mã yếu: RSI>72 / Phá đáy 20p / MACD cắt xuống / Dưới SMA50 (>= 2 tiêu chí). "
-            f"| Giảm sau 20p: **42%** | "
-            f"Tìm thấy **{len(df_market)} mã**")
+    active_filters = []
+    if st.session_state.filter_vol:
+        active_filters.append(f"Khối lượng {st.session_state.vol_op} {st.session_state.vol_val:,.0f}")
+    if st.session_state.filter_pct:
+        active_filters.append(f"% Thay đổi {st.session_state.pct_op} {st.session_state.pct_val}%")
+    if st.session_state.filter_exchange:
+        selected_exchanges = st.session_state.get("sel_exchange", [])
+        if selected_exchanges:
+            active_filters.append(f"Sàn: {', '.join(selected_exchanges)}")
+    if st.session_state.filter_industry:
+        selected_industries = st.session_state.get("sel_industry", [])
+        if selected_industries:
+            active_filters.append(f"Ngành: {', '.join(selected_industries)}")
+    if st.session_state.filter_buy:
+        active_filters.append("Tín hiệu MUA (3 ngày)")
+    if st.session_state.filter_sell:
+        active_filters.append("Tín hiệu BÁN (3 ngày)")
+        
+    if active_filters:
+        msg = "🔍 **Đang lọc theo:** " + " | ".join(active_filters)
+        if st.session_state.filter_buy:
+            msg += " | 🟢 **PP MUA:** Breakout 20 phiên + Khối lượng >= 1.5 lần + RSI < 70 + Trên MA20"
+        if st.session_state.filter_sell:
+            msg += " | 🔴 **PP BÁN:** >= 2 điểm yếu (RSI > 72, Phá đáy 20 phiên, MACD cắt xuống, Rớt MA50)"
+        st.info(msg)
     else:
         st.markdown("💡 *Bấm vào một dòng bất kỳ để xem biểu đồ kỹ thuật chi tiết*")
     
