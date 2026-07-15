@@ -389,29 +389,12 @@ if not df_market.empty:
     if "filter_industry" not in st.session_state:
         st.session_state.filter_industry = False
 
-    with st.sidebar.popover("➕ Thêm điều kiện"):
-        st.session_state.filter_vol = st.checkbox("Khối lượng", value=st.session_state.filter_vol)
-        st.session_state.filter_pct = st.checkbox("Phần trăm Tăng/Giảm", value=st.session_state.filter_pct)
-        st.session_state.filter_exchange = st.checkbox("Sàn giao dịch", value=st.session_state.filter_exchange)
-        st.session_state.filter_industry = st.checkbox("Ngành", value=st.session_state.filter_industry)
+    st.sidebar.checkbox("Khối lượng", key="filter_vol")
+    st.sidebar.checkbox("Phần trăm Tăng/Giảm", key="filter_pct")
+    st.sidebar.checkbox("Sàn giao dịch", key="filter_exchange")
+    st.sidebar.checkbox("Ngành", key="filter_industry")
         
-    has_active_filters = (
-        st.session_state.filter_vol or 
-        st.session_state.filter_pct or 
-        st.session_state.filter_exchange or 
-        st.session_state.filter_industry or 
-        search_query != ""
-    )
-    
-    if has_active_filters:
-        if st.sidebar.button("❌ Bỏ tất cả điều kiện lọc", use_container_width=True):
-            st.session_state.filter_vol = False
-            st.session_state.filter_pct = False
-            st.session_state.filter_exchange = False
-            st.session_state.filter_industry = False
-            if "search_input" in st.session_state:
-                st.session_state.search_input = ""
-            st.rerun()
+
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
 
