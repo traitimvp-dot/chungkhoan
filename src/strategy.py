@@ -337,3 +337,127 @@ def get_sell_candidates(days: int = 3, target_date: str = None) -> pd.DataFrame:
     cols = ['Mã CP', 'Ngày Tín hiệu', 'Giá', 'Tín hiệu', '% Hôm nay', '% 1 Tháng',
             'RSI', 'Vol/TB', 'Sàn', 'Ngành']
     return df_sell[[c for c in cols if c in df_sell.columns]].reset_index(drop=True)
+
+
+def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str, bt_method: str) -> dict:
+    """
+    Chạy backtest mô phỏng giao dịch thực tế cho một mã chứng khoán.
+    - Mua lô 100
+    - Tái đầu tư (lãi kép)
+    """
+    con = duckdb.connect(DB_PATH, read_only=True)
+    df = con.execute(f"SELECT time::DATE as date, close, volume, high, low, open FROM historical_prices WHERE symbol = '{symbol}' ORDER BY time").df()
+    con.close()
+    
+    if len(df) < 50:
+        import pandas as pd
+        return {"trades": pd.DataFrame(), "metrics": {}}
+        
+    df = _compute_indicators(df)
+    import pandas as pd
+    
+    # Filter by timeframe
+    if timeframe != "Tất cả":
+        end_date = df['date'].max()
+        if timeframe == "1 Năm":
+            start_date = end_date - pd.Timedelta(days=365)
+        elif timeframe == "3 Năm":
+            start_date = end_date - pd.Timedelta(days=3*365)
+        elif timeframe == "5 Năm":
+            start_date = end_date - pd.Timedelta(days=5*365)
+        elif timeframe == "6 Tháng":
+            start_date = end_date - pd.Timedelta(days=180)
+        else:
+            start_date = end_date - pd.Timedelta(days=365)
+        df = df[df['date'] >= start_date].reset_index(drop=True)
+    
+    capital = initial_capital
+    in_position = False
+    buy_price = 0
+    buy_date = None
+    buy_shares = 0
+    buy_idx = 0
+    
+    trades = []
+    
+    for i in range(len(df)):
+        row = df.iloc[i]
+        
+        # MUA
+        if not in_position:
+            # Check Buy Signal
+            if pd.notna(row.get('rsi')) and pd.notna(row.get('vol_avg20')) and pd.notna(row.get('high20')) and pd.notna(row.get('ma20')):
+                vol_avg = row['vol_avg20'] if row['vol_avg20'] > 0 else 1
+                vol_ratio = row['volume'] / vol_avg
+                if (row['close'] >= row['high20']) and (vol_ratio >= 1.5) and (row['rsi'] < 70) and (row['close'] > row['ma20']):
+                    buy_price = row['close']
+                    buy_shares = int(capital // (buy_price * 100)) * 100
+                    if buy_shares > 0:
+                        in_position = True
+                        buy_date = row['date']
+                        buy_idx = i
+                        capital -= (buy_shares * buy_price)
+                        
+        # BÁN
+        else:
+            days_held = i - buy_idx
+            sell_triggered = False
+            
+            # T+2 constraint
+            if days_held >= 2:
+                if bt_method == "Phương pháp 1":
+                    if pd.notna(row.get('rsi')) and pd.notna(row.get('macd_hist')) and pd.notna(row.get('prev_macd')) and pd.notna(row.get('vol_avg20')) and pd.notna(row.get('low20')) and pd.notna(row.get('ma50')):
+                        vol_avg = row['vol_avg20'] if row['vol_avg20'] > 0 else 1
+                        score = (
+                            int(row['rsi'] > 72) +
+                            int(row['close'] <= row['low20'] and row['volume'] >= 1.5 * vol_avg) +
+                            int(row['macd_hist'] < 0 and row['prev_macd'] >= 0 and row['rsi'] > 55) +
+                            int(row['close'] < row['ma50'])
+                        )
+                        if score >= 2:
+                            sell_triggered = True
+                        
+            if sell_triggered or i == len(df) - 1:
+                if sell_triggered:
+                    sell_price = row['close']
+                    sell_date = row['date']
+                else: 
+                    sell_price = row['close']
+                    sell_date = row['date']
+                    
+                capital += (buy_shares * sell_price)
+                
+                pl_amount = (sell_price - buy_price) * buy_shares
+                pl_pct = (sell_price - buy_price) / buy_price * 100
+                
+                trades.append({
+                    "Ngày Mua": buy_date.strftime('%Y-%m-%d'),
+                    "Giá Mua": buy_price,
+                    "Khối lượng": buy_shares,
+                    "Ngày Bán": sell_date.strftime('%Y-%m-%d'),
+                    "Giá Bán": sell_price,
+                    "Lãi/Lỗ (%)": round(pl_pct, 2),
+                    "Tiền Lãi/Lỗ": pl_amount
+                })
+                
+                in_position = False
+                
+    df_trades = pd.DataFrame(trades)
+    
+    if df_trades.empty:
+        return {"trades": df_trades, "metrics": {}}
+        
+    total_trades = len(df_trades)
+    winning_trades = (df_trades["Lãi/Lỗ (%)"] > 0).sum()
+    win_rate = winning_trades / total_trades * 100
+    final_capital = capital if not in_position else capital + (buy_shares * buy_price)
+    total_profit_pct = (final_capital - initial_capital) / initial_capital * 100
+    
+    metrics = {
+        "final_capital": final_capital,
+        "total_profit_pct": total_profit_pct,
+        "total_trades": total_trades,
+        "win_rate": win_rate
+    }
+    
+    return {"trades": df_trades, "metrics": metrics}

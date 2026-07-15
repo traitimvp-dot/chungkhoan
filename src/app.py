@@ -99,7 +99,7 @@ def show_chart_dialog_content(symbol):
         st.warning(f"Không có dữ liệu cho mã {symbol}.")
         return
 
-    tab1, tab2 = st.tabs(["📈 Biểu đồ Kỹ thuật", "📋 Lịch sử Giá"])
+    tab1, tab2, tab3 = st.tabs(["📈 Biểu đồ Kỹ thuật", "📋 Lịch sử Giá", "🧪 Backtest Chiến lược"])
     
     with tab1:
         # Tạo sẵn vùng chứa cho biểu đồ để render sau khi đã lấy được giá trị timeframe bên dưới
@@ -380,7 +380,44 @@ def show_chart_dialog_content(symbol):
                 "Khối lượng": st.column_config.NumberColumn(format="%,d")
             }
         )
-
+        
+    with tab3:
+        st.markdown("### 🧪 Hệ thống Backtest Mô phỏng")
+        col_bt1, col_bt2, col_bt3 = st.columns(3)
+        capital = col_bt1.number_input("Số tiền đầu tư (VNĐ)", value=100000000, step=10000000, key=f"bt_cap_{symbol}")
+        bt_timeframe = col_bt2.selectbox("Khoảng thời gian", ["1 Năm", "3 Năm", "5 Năm", "Tất cả"], index=1, key=f"bt_tf_{symbol}")
+        bt_method = col_bt3.selectbox("Phương pháp Backtest", ["Phương pháp 1"], index=0, key=f"bt_method_{symbol}")
+        
+        if st.button("🚀 Chạy Backtest", type="primary", use_container_width=True, key=f"btn_run_bt_{symbol}"):
+            with st.spinner("Đang chạy mô phỏng giao dịch..."):
+                bt_results = _strategy_mod.run_portfolio_backtest(symbol, capital, bt_timeframe, bt_method)
+                
+                df_trades = bt_results["trades"]
+                if df_trades.empty:
+                    st.info(f"Không có giao dịch nào được thực hiện trong thời gian {bt_timeframe}.")
+                else:
+                    m = bt_results["metrics"]
+                    st.markdown("---")
+                    c1, c2, c3 = st.columns(3)
+                    
+                    profit_color = "normal" if m['total_profit_pct'] > 0 else "inverse"
+                    c1.metric("Tổng Tài sản (VNĐ)", f"{m['final_capital']:,.0f}", f"{m['total_profit_pct']:.2f}%", delta_color=profit_color)
+                    c2.metric("Số lệnh giao dịch", f"{m['total_trades']}", "")
+                    c3.metric("Tỉ lệ Thắng (Win rate)", f"{m['win_rate']:.1f}%", "")
+                    
+                    st.markdown("#### 📜 Lịch sử Giao dịch")
+                    st.dataframe(
+                        df_trades, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config={
+                            "Giá Mua": st.column_config.NumberColumn(format="%,.0f"),
+                            "Giá Bán": st.column_config.NumberColumn(format="%,.0f"),
+                            "Khối lượng": st.column_config.NumberColumn(format="%,d"),
+                            "Tiền Lãi/Lỗ": st.column_config.NumberColumn(format="%,.0f"),
+                            "Lãi/Lỗ (%)": st.column_config.NumberColumn(format="%.2f%%")
+                        }
+                    )
 # --- PHẦN GIAO DIỆN CHÍNH ---
 
 
