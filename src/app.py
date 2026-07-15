@@ -249,7 +249,7 @@ def show_chart_dialog_content(symbol):
                 
                 # Sắp xếp markers theo thời gian (bắt buộc với Lightweight Charts)
                 markers.sort(key=lambda x: x['time'])
-                    
+                
                 priceVolumeChartOptions = {
                     "height": 450,
                     "rightPriceScale": {
