@@ -38,6 +38,37 @@ def scan_sell_signals(target_date: str = None):
 get_buy_candidates = _strategy_mod.get_buy_candidates
 get_sell_candidates = _strategy_mod.get_sell_candidates
 
+# ==============================================================================
+# WATCHLIST — Lưu vào file JSON trong thư mục data/
+# ==============================================================================
+
+WATCHLIST_PATH = os.path.join(BASE_DIR, "data", "watchlist.json")
+
+def load_watchlist() -> list:
+    if os.path.exists(WATCHLIST_PATH):
+        try:
+            import json
+            with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
+    return []
+
+def save_watchlist(symbols: list):
+    import json
+    os.makedirs(os.path.dirname(WATCHLIST_PATH), exist_ok=True)
+    with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
+        json.dump(sorted(set(symbols)), f, ensure_ascii=False, indent=2)
+
+def toggle_watchlist(symbol: str):
+    wl = load_watchlist()
+    if symbol in wl:
+        wl.remove(symbol)
+    else:
+        wl.append(symbol)
+    save_watchlist(wl)
+
+
 @st.cache_data(ttl=60)
 def load_market_overview():
     con = duckdb.connect(DB_PATH, read_only=True)
@@ -100,13 +131,14 @@ def show_chart_dialog_content(symbol):
         st.warning(f"Không có dữ liệu cho mã {symbol}.")
         return
 
+
     tab1, tab2, tab3 = st.tabs(["📈 Biểu đồ Kỹ thuật", "📋 Lịch sử Giá", "🧪 Backtest Chiến lược"])
     
     with tab1:
         # Tạo sẵn vùng chứa cho biểu đồ để render sau khi đã lấy được giá trị timeframe bên dưới
         chart_container = st.container()
         
-        # Hàng chứa tùy chọn khung thời gian và ghi chú các đường MA
+        # Hàng chứa tùy chọn khung thời gian và MA legend
         col_tf, col_legend = st.columns([1, 1])
         with col_tf:
             timeframe = st.pills(
@@ -138,11 +170,12 @@ def show_chart_dialog_content(symbol):
         }
         </style>''', unsafe_allow_html=True)
         
-        # 2 combobox tín hiệu Mua / Bán — gọn, không nhãn, mặc định tắt
+        # 2 combobox tín hiệu Mua / Bán + checkbox Theo dõi cùng hàng
         buy_signal_options = ["🟢 Tín hiệu Mua: (Tắt)"] + [f"🟢 {s}" for s in _strategy_mod.get_available_buy_signals()]
         sell_signal_options = ["🔴 Tín hiệu Bán: (Tắt)"] + [f"🔴 {s}" for s in _strategy_mod.get_available_sell_signals()]
         
-        col_sig1, col_sig2, col_spacer = st.columns([1, 1, 2])
+        # Chia làm 6 cột: 2 cột đầu cho combobox, 3 cột giữa trống, cột 6 cho checkbox
+        col_sig1, col_sig2, _, _, _, col_watch_sig = st.columns([1, 1, 1, 1, 1, 1])
         selected_buy_signal = col_sig1.selectbox(
             "Tín hiệu Mua",
             options=buy_signal_options,
@@ -157,6 +190,22 @@ def show_chart_dialog_content(symbol):
             key=f"sel_sell_sig_{symbol}",
             label_visibility="collapsed"
         )
+        
+        # Checkbox Theo dõi nằm ở cột thứ 6
+        wl_tab = load_watchlist()
+        is_watching_tab = symbol in wl_tab
+        watch_label_tab = "⭐ Đang theo dõi" if is_watching_tab else "☆ Theo dõi"
+        
+        # Đẩy checkbox xuống một chút để cân đối với combobox
+        col_watch_sig.markdown("<div style='padding-top: 5px;'></div>", unsafe_allow_html=True)
+        if col_watch_sig.checkbox(watch_label_tab, value=is_watching_tab, key=f"watch_{symbol}"):
+            if not is_watching_tab:
+                toggle_watchlist(symbol)
+                st.rerun()
+        else:
+            if is_watching_tab:
+                toggle_watchlist(symbol)
+                st.rerun()
         
         show_buy = not selected_buy_signal.endswith("(Tắt)")
         show_sell = not selected_sell_signal.endswith("(Tắt)")
@@ -580,6 +629,8 @@ if not df_market.empty:
 
 
     
+    if "filter_watchlist" not in st.session_state:
+        st.session_state.filter_watchlist = False
     if "filter_vol" not in st.session_state:
         st.session_state.filter_vol = False
     if "filter_pct" not in st.session_state:
@@ -595,6 +646,7 @@ if not df_market.empty:
     if "filter_date" not in st.session_state:
         st.session_state.filter_date = False
 
+    st.sidebar.checkbox("Danh sách theo dõi", key="filter_watchlist")
     st.sidebar.checkbox("Khối lượng", key="filter_vol")
     st.sidebar.checkbox("Phần trăm Tăng/Giảm", key="filter_pct")
     st.sidebar.checkbox("Sàn giao dịch", key="filter_exchange")
@@ -614,8 +666,13 @@ if not df_market.empty:
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
 
+    if st.session_state.filter_watchlist:
+        watchlist = load_watchlist()
+        if watchlist:
+            df_market = df_market[df_market["Mã CP"].isin(watchlist)]
+        else:
+            df_market = df_market.iloc[0:0]  # Rỗng nếu chưa theo dõi ai
 
-        
     if st.session_state.filter_vol:
         st.sidebar.markdown("<p style='margin-bottom: 0px; font-weight: bold;'>Lọc theo Khối lượng</p>", unsafe_allow_html=True)
         c1, c2 = st.sidebar.columns([1, 2])
