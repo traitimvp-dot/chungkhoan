@@ -395,15 +395,24 @@ def show_chart_dialog_content(symbol):
                     df_chart = bt_results.get("df_chart")
                     if df_chart is not None and not df_chart.empty:
                         st.markdown("#### 📊 Biểu đồ Trực quan")
-                        df_chart['time'] = df_chart['date'].astype(str)
+                        df_chart['time'] = pd.to_datetime(df_chart['date']).dt.strftime('%Y-%m-%d')
                         
                         candles = df_chart[['time', 'open', 'high', 'low', 'close']].to_dict('records')
                         
-                        if 'sma_20' not in df_chart.columns:
+                        # Sử dụng MA đã tính từ strategy (nằm trên full data) để không bị hụt đoạn đầu
+                        if 'ma20' in df_chart.columns:
+                            df_chart['sma_20'] = df_chart['ma20']
+                        else:
                             df_chart['sma_20'] = ta.trend.sma_indicator(df_chart['close'], window=20)
-                        if 'sma_50' not in df_chart.columns:
+                            
+                        if 'ma50' in df_chart.columns:
+                            df_chart['sma_50'] = df_chart['ma50']
+                        else:
                             df_chart['sma_50'] = ta.trend.sma_indicator(df_chart['close'], window=50)
-                        if 'sma_150' not in df_chart.columns:
+                            
+                        if 'ma200' in df_chart.columns:
+                            df_chart['sma_150'] = df_chart['ma200']
+                        else:
                             df_chart['sma_150'] = ta.trend.sma_indicator(df_chart['close'], window=150)
                             
                         sma_20 = df_chart[['time', 'sma_20']].dropna().rename(columns={'sma_20': 'value'}).to_dict('records')
@@ -498,35 +507,27 @@ def show_chart_dialog_content(symbol):
                                         "bottom": 0,
                                     }
                                 }
-                            },
-                            {
-                                "type": "Line",
-                                "data": sma_20,
-                                "options": {
-                                    "color": "#f39c12",
-                                    "lineWidth": 1,
-                                    "priceLineVisible": False
-                                }
-                            },
-                            {
-                                "type": "Line",
-                                "data": sma_50,
-                                "options": {
-                                    "color": "#3498db",
-                                    "lineWidth": 1,
-                                    "priceLineVisible": False
-                                }
-                            },
-                            {
-                                "type": "Line",
-                                "data": sma_150,
-                                "options": {
-                                    "color": "#9b59b6",
-                                    "lineWidth": 1,
-                                    "priceLineVisible": False
-                                }
                             }
                         ]
+                        
+                        if sma_20:
+                            priceVolumeSeries.append({
+                                "type": "Line",
+                                "data": sma_20,
+                                "options": {"color": "#f39c12", "lineWidth": 1, "priceLineVisible": False}
+                            })
+                        if sma_50:
+                            priceVolumeSeries.append({
+                                "type": "Line",
+                                "data": sma_50,
+                                "options": {"color": "#3498db", "lineWidth": 1, "priceLineVisible": False}
+                            })
+                        if sma_150:
+                            priceVolumeSeries.append({
+                                "type": "Line",
+                                "data": sma_150,
+                                "options": {"color": "#9b59b6", "lineWidth": 1, "priceLineVisible": False}
+                            })
                         
                         renderLightweightCharts([
                             {

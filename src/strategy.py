@@ -115,15 +115,25 @@ class Method1(BaseStrategy):
         # BUY SIGNAL
         df['buy_signal'] = valid & (df['close'] >= df['high20']) & (vol_ratio >= 1.5) & (df['rsi'] < 70) & (df['close'] > df['ma20'])
         
-        # SELL SIGNAL
-        valid_sell = df['rsi'].notna() & df['macd_hist'].notna() & df['prev_macd'].notna() & df['vol_avg20'].notna() & df['low20'].notna() & df['ma50'].notna()
-        score = (
-            (df['rsi'] > 72).astype(int) +
-            ((df['close'] <= df['low20']) & (df['volume'] >= 1.5 * vol_avg)).astype(int) +
-            ((df['macd_hist'] < 0) & (df['prev_macd'] >= 0) & (df['rsi'] > 55)).astype(int) +
-            (df['close'] < df['ma50']).astype(int)
-        )
-        df['sell_signal'] = valid_sell & (score >= 2)
+        # SELL SIGNAL (Tối ưu hóa dựa trên backtest data thực tế)
+        valid_sell = df['rsi'].notna() & df['macd_hist'].notna() & df['prev_macd'].notna() & df['vol_avg20'].notna() & df['ma20'].notna() & df['ma50'].notna()
+        
+        # 1. Gãy nền MA20 hoặc MA50 (Tín hiệu Cắt lỗ/Đảo chiều Trend)
+        # Bán dứt khoát khi giá cắt xuống MA20 hoặc cắt xuống MA50
+        prev_close = df['close'].shift(1)
+        prev_ma20 = df['ma20'].shift(1)
+        prev_ma50 = df['ma50'].shift(1)
+        break_ma20 = (df['close'] < df['ma20']) & (prev_close >= prev_ma20)
+        break_ma50 = (df['close'] < df['ma50']) & (prev_close >= prev_ma50)
+        
+        # 2. MACD cắt xuống Signal line (Tín hiệu Động lượng yếu đi)
+        macd_cross_down = (df['macd_hist'] < 0) & (df['prev_macd'] >= 0)
+        
+        # 3. Quá mua (RSI > 70) kèm Khối lượng xả đột biến
+        exhaustion = (df['rsi'] > 70) & (vol_ratio >= 1.5)
+        
+        # Chốt tín hiệu Bán (Kích hoạt 1 trong các điều kiện trên)
+        df['sell_signal'] = valid_sell & (break_ma20 | break_ma50 | macd_cross_down | exhaustion)
         
         return df
 
@@ -264,7 +274,9 @@ def get_sell_candidates(days: int = 3, target_date: str = None, method: str = Me
                 "Volume": row['volume'],
                 "RSI": row['rsi'],
                 "MA Score": row['ma_score'],
-                "Ghi chú": f"Tín hiệu BÁN ({method})"
+                "Vol/Avg20": round(row['volume'] / (row['vol_avg20'] if row['vol_avg20'] > 0 else 1), 2),
+                "MA20 Trend": "Tăng" if row['slope_ma20'] > 0 else "Giảm",
+                "MA50 Trend": "Tăng" if row['slope_ma50'] > 0 else "Giảm"
             })
 
     df_candidates = pd.DataFrame(candidates)
@@ -297,6 +309,9 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str, 
     
     if df.empty:
         return {"metrics": None, "trades": pd.DataFrame()}
+        
+    # Loại bỏ các dòng bị trùng lặp ngày để tránh lỗi crash biểu đồ
+    df = df.drop_duplicates(subset=['date'], keep='last')
 
     # 2. Sử dụng Engine Chiến lược
     strategy = get_strategy(bt_method)
