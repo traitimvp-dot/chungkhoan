@@ -153,6 +153,7 @@ def update_daily(max_workers: int = 5):
                 FROM company_info c 
                 LEFT JOIN historical_prices h ON c."Mã CP" = h.symbol 
                 WHERE length(c."Mã CP") = 3 
+                  AND (c."Sàn" IS NULL OR c."Sàn" != 'DELISTED')
                 GROUP BY c."Mã CP"
             """
             df_max = con.execute(query_max).df()

@@ -76,6 +76,7 @@ def load_market_overview():
     df = con.execute(query).df()
     con.close()
     df = df.drop_duplicates(subset=["Mã CP"], keep='last')
+    df = df[df["Sàn"] != "DELISTED"]
     return df
 
 @st.cache_data(ttl=300)
@@ -128,14 +129,6 @@ def show_chart_dialog_content(symbol):
         if not timeframe:
             timeframe = "1 Năm"
         
-        # Nút chiến lược trong chart tab
-        buy_key = f"show_buy_{symbol}"
-        sell_key = f"show_sell_{symbol}"
-        if buy_key not in st.session_state:
-            st.session_state[buy_key] = False
-        if sell_key not in st.session_state:
-            st.session_state[sell_key] = False
-        
         st.markdown('''<style>
         div[data-testid="stButton"] button {
             padding: 0.2rem 0.5rem;
@@ -144,30 +137,34 @@ def show_chart_dialog_content(symbol):
             font-size: 14px;
         }
         </style>''', unsafe_allow_html=True)
-        col_label, col_s1, col_s2, col_s3 = st.columns([1.4, 0.8, 0.8, 2.0])
-        col_label.markdown("<div style='padding-top: 8px; font-weight: 600; color: #f39c12;'>🎯 Phương pháp 1:</div>", unsafe_allow_html=True)
         
-        if col_s1.button(
-            "🟢 Mua" if not st.session_state[buy_key] else "✅ Mua",
-            key=f"btn_buy_{symbol}", use_container_width=True,
-            type="primary" if st.session_state[buy_key] else "secondary"
-        ):
-            st.session_state[buy_key] = not st.session_state[buy_key]
-        if col_s2.button(
-            "🔴 Bán" if not st.session_state[sell_key] else "✅ Bán",
-            key=f"btn_sell_{symbol}", use_container_width=True,
-            type="primary" if st.session_state[sell_key] else "secondary"
-        ):
-            st.session_state[sell_key] = not st.session_state[sell_key]
-        
-        # Hiển thị trạng thái đang bật
-        status_parts = []
-        if st.session_state[buy_key]:
-            status_parts.append("🟢 MUA")
-        if st.session_state[sell_key]:
-            status_parts.append("🔴 BÁN")
-        if status_parts:
-            col_s3.caption(f"<div style='padding-top: 12px; font-size: 13px;'>Đang hiện: {' + '.join(status_parts)}</div>", unsafe_allow_html=True)
+        active_signals = {}
+        for method_name in _strategy_mod.get_available_strategies():
+            buy_key = f"buy_{symbol}_{method_name}"
+            sell_key = f"sell_{symbol}_{method_name}"
+            if buy_key not in st.session_state: st.session_state[buy_key] = False
+            if sell_key not in st.session_state: st.session_state[sell_key] = False
+            
+            col_label, col_s1, col_s2, col_s3 = st.columns([1.4, 0.8, 0.8, 2.0])
+            col_label.markdown(f"<div style='padding-top: 8px; font-weight: 600; color: #f39c12;'>🎯 {method_name}:</div>", unsafe_allow_html=True)
+            
+            if col_s1.button("🟢 Mua" if not st.session_state[buy_key] else "✅ Mua", key=f"btn_{buy_key}", use_container_width=True, type="primary" if st.session_state[buy_key] else "secondary"):
+                st.session_state[buy_key] = not st.session_state[buy_key]
+                st.rerun()
+            if col_s2.button("🔴 Bán" if not st.session_state[sell_key] else "✅ Bán", key=f"btn_{sell_key}", use_container_width=True, type="primary" if st.session_state[sell_key] else "secondary"):
+                st.session_state[sell_key] = not st.session_state[sell_key]
+                st.rerun()
+                
+            status_parts = []
+            if st.session_state[buy_key]: status_parts.append("🟢 MUA")
+            if st.session_state[sell_key]: status_parts.append("🔴 BÁN")
+            if status_parts:
+                col_s3.caption(f"<div style='padding-top: 12px; font-size: 13px;'>Đang hiện: {' + '.join(status_parts)}</div>", unsafe_allow_html=True)
+                
+            active_signals[method_name] = {
+                "buy": st.session_state[buy_key],
+                "sell": st.session_state[sell_key]
+            }
 
         df_filtered = df.copy()
         if timeframe != "Tất cả":
@@ -188,30 +185,7 @@ def show_chart_dialog_content(symbol):
                 df_tv['sma_50'] = ta.trend.sma_indicator(df_tv['close'], window=50)
                 df_tv['sma_150'] = ta.trend.sma_indicator(df_tv['close'], window=150)
                 
-                # Tính các chỉ báo cho tín hiệu mua/bán
-                close_s = df_tv['close']
-                volume_s = df_tv['volume']
-                high_s = df_tv['high']
-                low_s = df_tv['low']
-                
-                delta = close_s.diff()
-                gain = delta.clip(lower=0).rolling(14).mean()
-                loss = (-delta.clip(upper=0)).rolling(14).mean()
-                rs = gain / loss.replace(0, np.nan)
-                df_tv['rsi'] = 100 - (100 / (1 + rs))
-                
-                ema12 = close_s.ewm(span=12).mean()
-                ema26 = close_s.ewm(span=26).mean()
-                macd_line = ema12 - ema26
-                df_tv['macd_hist'] = macd_line - macd_line.ewm(span=9).mean()
-                df_tv['prev_macd'] = df_tv['macd_hist'].shift(1)
-                df_tv['vol_avg20'] = volume_s.rolling(20).mean()
-                df_tv['high20'] = high_s.rolling(20).max()
-                df_tv['low20'] = low_s.rolling(20).min()
-                df_tv['sma50_col'] = close_s.rolling(50).mean()
-                df_tv['prev_above_sma50'] = (close_s.shift(1) > df_tv['sma50_col'].shift(1))
-                
-                # Sau đó mới cắt df_tv theo khung thời gian giống df_filtered
+                # Cắt df_tv theo khung thời gian giống df_filtered
                 if timeframe != "Tất cả":
                     df_tv = df_tv[df_tv['time'] >= start_date]
                     
@@ -231,45 +205,47 @@ def show_chart_dialog_content(symbol):
                         'color': color
                     })
                 
-                # Tính markers tín hiệu mua/bán (2 loại độc lập, có thể bật cùng lúc)
+                # Tính markers tín hiệu mua/bán từ Strategy Pattern
                 markers = []
                 
-                if st.session_state.get(buy_key):
-                    df_sig_buy = df_tv.dropna(subset=['rsi', 'vol_avg20', 'high20', 'sma_20'])
-                    buy_rows = df_sig_buy[
-                        (df_sig_buy['close'] >= df_sig_buy['high20']) &
-                        (df_sig_buy['volume'] >= 1.5 * df_sig_buy['vol_avg20']) &
-                        (df_sig_buy['rsi'] < 70) &
-                        (df_sig_buy['close'] > df_sig_buy['sma_20'])
-                    ]
-                    for _, r in buy_rows.iterrows():
-                        markers.append({
-                            "time": r['time'],
-                            "position": "belowBar",
-                            "color": "#00e676",
-                            "shape": "arrowUp",
-                            "text": "MUA"
-                        })
-
-                if st.session_state.get(sell_key):
-                    df_sig_sell = df_tv.dropna(subset=['rsi', 'macd_hist', 'prev_macd', 'vol_avg20', 'low20', 'sma50_col'])
-                    for _, r in df_sig_sell.iterrows():
-                        score = (
-                            int(r['rsi'] > 72) +
-                            int(r['close'] <= r['low20'] and r['volume'] >= 1.5 * r['vol_avg20']) +
-                            int(r['macd_hist'] < 0 and r['prev_macd'] >= 0 and r['rsi'] > 55) +
-                            int(r['close'] < r['sma50_col'])
-                        )
-                        if score >= 2:
-                            markers.append({
-                                "time": r['time'],
-                                "position": "aboveBar",
-                                "color": "#ff1744",
-                                "shape": "arrowDown",
-                                "text": "BÁN"
-                            })
-                
-                # Sắp xếp markers theo thời gian (bắt buộc với Lightweight Charts)
+                # Duyệt qua các phương pháp để lấy marker
+                for method_name, signals in active_signals.items():
+                    if signals["buy"] or signals["sell"]:
+                        # Prepare data for this strategy on the original FULL df
+                        strategy = _strategy_mod.get_strategy(method_name)
+                        df_sig = df.reset_index().copy()
+                        df_sig = strategy.prepare_data(df_sig)
+                        df_sig = strategy.generate_signals(df_sig)
+                        
+                        # Cắt theo timeframe
+                        if timeframe != "Tất cả":
+                            df_sig = df_sig[df_sig['time'] >= start_date]
+                            
+                        # Plot Buy
+                        if signals["buy"]:
+                            buy_rows = df_sig[df_sig['buy_signal']]
+                            for _, r in buy_rows.iterrows():
+                                markers.append({
+                                    "time": str(r['time']),
+                                    "position": "belowBar",
+                                    "color": "#00e676",
+                                    "shape": "arrowUp",
+                                    "text": f"MUA ({method_name})"
+                                })
+                        
+                        # Plot Sell
+                        if signals["sell"]:
+                            sell_rows = df_sig[df_sig['sell_signal']]
+                            for _, r in sell_rows.iterrows():
+                                markers.append({
+                                    "time": str(r['time']),
+                                    "position": "aboveBar",
+                                    "color": "#ff1744",
+                                    "shape": "arrowDown",
+                                    "text": f"BÁN ({method_name})"
+                                })
+                                
+                # Sắp xếp markers theo thời gian
                 markers.sort(key=lambda x: x['time'])
                 
                 priceVolumeChartOptions = {
@@ -364,7 +340,8 @@ def show_chart_dialog_content(symbol):
                     }
                 ]
             
-                sig_key_chart = f"{symbol}_{timeframe}_{st.session_state.get(buy_key)}_{st.session_state.get(sell_key)}"
+                key_suffix = "_".join([f"{v['buy']}_{v['sell']}" for k,v in active_signals.items()])
+                sig_key_chart = f"{symbol}_{timeframe}_{key_suffix}"
                 renderLightweightCharts([
                     {
                         "chart": priceVolumeChartOptions,
@@ -396,7 +373,7 @@ def show_chart_dialog_content(symbol):
         col_bt1, col_bt2, col_bt3 = st.columns(3)
         capital = col_bt1.number_input("Số tiền đầu tư (VNĐ)", value=100000000, step=10000000, key=f"bt_cap_{symbol}")
         bt_timeframe = col_bt2.selectbox("Khoảng thời gian", ["1 Năm", "3 Năm", "5 Năm", "Tất cả"], index=1, key=f"bt_tf_{symbol}")
-        bt_method = col_bt3.selectbox("Phương pháp Backtest", ["Phương pháp 1"], index=0, key=f"bt_method_{symbol}")
+        bt_method = col_bt3.selectbox("Phương pháp Backtest", _strategy_mod.get_available_strategies(), index=0, key=f"bt_method_{symbol}")
         
         if st.button("🚀 Chạy Backtest", type="primary", use_container_width=True, key=f"btn_run_bt_{symbol}"):
             with st.spinner("Đang chạy mô phỏng giao dịch..."):
@@ -444,8 +421,8 @@ def show_chart_dialog_content(symbol):
                             
                         markers = []
                         for _, trade in df_trades.iterrows():
-                            buy_date_str = trade['Ngày Mua']
-                            sell_date_str = trade['Ngày Bán']
+                            buy_date_str = str(trade['Ngày Mua'])[:10]
+                            sell_date_str = str(trade['Ngày Bán'])[:10]
                             # Buy marker
                             markers.append({
                                 "time": buy_date_str,
@@ -685,14 +662,16 @@ if not df_market.empty:
     if st.session_state.filter_buy:
         df_buy = scan_buy_signals(target_date_str)
         if not df_buy.empty:
-            df_market = df_market.merge(df_buy[['Mã CP', 'Ngày Tín hiệu', 'Tín hiệu']].rename(columns={'Ngày Tín hiệu': 'Ngày Mua', 'Tín hiệu': 'TH Mua'}), on='Mã CP', how='inner')
+            df_buy['TH Mua'] = 'Mua'
+            df_market = df_market.merge(df_buy[['Mã CP', 'Ngày', 'TH Mua']].rename(columns={'Ngày': 'Ngày Mua'}), on='Mã CP', how='inner')
         else:
             df_market = df_market.iloc[0:0]
             
     if st.session_state.filter_sell:
         df_sell = scan_sell_signals(target_date_str)
         if not df_sell.empty:
-            df_market = df_market.merge(df_sell[['Mã CP', 'Ngày Tín hiệu', 'Tín hiệu']].rename(columns={'Ngày Tín hiệu': 'Ngày Bán', 'Tín hiệu': 'TH Bán'}), on='Mã CP', how='inner')
+            df_sell['TH Bán'] = 'Bán'
+            df_market = df_market.merge(df_sell[['Mã CP', 'Ngày', 'TH Bán']].rename(columns={'Ngày': 'Ngày Bán'}), on='Mã CP', how='inner')
         else:
             df_market = df_market.iloc[0:0]
         
