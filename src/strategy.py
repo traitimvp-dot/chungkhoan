@@ -30,8 +30,8 @@ class BaseStrategy:
         df['sell_signal'] = False
         return df
 
-class Method1(BaseStrategy):
-    name = "Phương pháp 1"
+class IndicatorMixin:
+    """Mixin tính toán chỉ báo kỹ thuật dùng chung cho cả tín hiệu Mua và Bán."""
     
     def prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
         grp = df.copy()
@@ -57,7 +57,7 @@ class Method1(BaseStrategy):
 
         # ── Spread giữa các MA ────────────────────────────────────────────
         grp['spread_20_50']  = (grp['ma20'] - grp['ma50'])  / grp['ma50'].replace(0, np.nan)
-        grp['spread_20_50_prev'] = grp['spread_20_50'].shift(5)  # 5 phiên trước
+        grp['spread_20_50_prev'] = grp['spread_20_50'].shift(5)
 
         # ── Crossover flags ───────────────────────────────────────────────
         prev_gap_20_50  = grp['spread_20_50'].shift(1)
@@ -102,59 +102,109 @@ class Method1(BaseStrategy):
         )
         return grp
 
+
+class BuySignal1(IndicatorMixin, BaseStrategy):
+    name = "Tín hiệu Mua 1"
+    description = "Breakout 20 phiên + Khối lượng ≥ 1.5x + RSI < 70 + Trên MA20"
+    
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-        
-        # Filter where indicators are valid
         valid = df['rsi'].notna() & df['vol_avg20'].notna() & df['high20'].notna() & df['ma20'].notna()
-        
         vol_avg = df['vol_avg20'].copy()
         vol_avg[vol_avg <= 0] = 1
         vol_ratio = df['volume'] / vol_avg
         
-        # BUY SIGNAL
+        # BUY SIGNAL: Breakout 20 phiên + Vol ≥ 1.5x + RSI < 70 + Trên MA20
         df['buy_signal'] = valid & (df['close'] >= df['high20']) & (vol_ratio >= 1.5) & (df['rsi'] < 70) & (df['close'] > df['ma20'])
-        
-        # SELL SIGNAL (Tối ưu hóa dựa trên backtest data thực tế)
+        df['sell_signal'] = False
+        return df
+
+
+class SellSignal1(IndicatorMixin, BaseStrategy):
+    name = "Tín hiệu Bán 1"
+    description = "Gãy MA20/MA50, MACD cắt xuống, hoặc RSI > 70 + Vol xả ≥ 1.5x"
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
         valid_sell = df['rsi'].notna() & df['macd_hist'].notna() & df['prev_macd'].notna() & df['vol_avg20'].notna() & df['ma20'].notna() & df['ma50'].notna()
+        vol_avg = df['vol_avg20'].copy()
+        vol_avg[vol_avg <= 0] = 1
+        vol_ratio = df['volume'] / vol_avg
         
-        # 1. Gãy nền MA20 hoặc MA50 (Tín hiệu Cắt lỗ/Đảo chiều Trend)
-        # Bán dứt khoát khi giá cắt xuống MA20 hoặc cắt xuống MA50
+        # 1. Gãy nền MA20 hoặc MA50 (Đảo chiều Trend)
         prev_close = df['close'].shift(1)
         prev_ma20 = df['ma20'].shift(1)
         prev_ma50 = df['ma50'].shift(1)
         break_ma20 = (df['close'] < df['ma20']) & (prev_close >= prev_ma20)
         break_ma50 = (df['close'] < df['ma50']) & (prev_close >= prev_ma50)
         
-        # 2. MACD cắt xuống Signal line (Tín hiệu Động lượng yếu đi)
+        # 2. MACD cắt xuống Signal line (Mất động lượng)
         macd_cross_down = (df['macd_hist'] < 0) & (df['prev_macd'] >= 0)
         
-        # 3. Quá mua (RSI > 70) kèm Khối lượng xả đột biến
+        # 3. Quá mua + Khối lượng xả đột biến (Phân phối đỉnh)
         exhaustion = (df['rsi'] > 70) & (vol_ratio >= 1.5)
         
-        # Chốt tín hiệu Bán (Kích hoạt 1 trong các điều kiện trên)
+        df['buy_signal'] = False
         df['sell_signal'] = valid_sell & (break_ma20 | break_ma50 | macd_cross_down | exhaustion)
-        
         return df
 
 
-# Đăng ký các chiến lược vào đây
-STRATEGY_REGISTRY = {
-    Method1.name: Method1()
+# ==============================================================================
+# REGISTRY TÍN HIỆU MUA / BÁN TÁCH BIỆT
+# ==============================================================================
+
+BUY_SIGNAL_REGISTRY = {
+    BuySignal1.name: BuySignal1()
 }
 
-def get_strategy(name: str) -> BaseStrategy:
-    return STRATEGY_REGISTRY.get(name, STRATEGY_REGISTRY[Method1.name])
+SELL_SIGNAL_REGISTRY = {
+    SellSignal1.name: SellSignal1()
+}
 
+# --- Backward-compat shim: STRATEGY_REGISTRY dùng cho code cũ chưa kịp migrate ---
+class _CombinedSignal(IndicatorMixin, BaseStrategy):
+    """Chiến lược kết hợp dùng nội bộ cho backtest."""
+    name = "_combined"
+    def __init__(self, buy: BaseStrategy, sell: BaseStrategy):
+        self._buy = buy
+        self._sell = sell
+    def prepare_data(self, df):
+        return self._buy.prepare_data(df)
+    def generate_signals(self, df):
+        df = self._buy.generate_signals(df)
+        df2 = self._sell.generate_signals(df.copy())
+        df['sell_signal'] = df2['sell_signal']
+        return df
+
+
+def get_buy_signal(name: str) -> BaseStrategy:
+    return BUY_SIGNAL_REGISTRY.get(name, list(BUY_SIGNAL_REGISTRY.values())[0])
+
+def get_sell_signal(name: str) -> BaseStrategy:
+    return SELL_SIGNAL_REGISTRY.get(name, list(SELL_SIGNAL_REGISTRY.values())[0])
+
+def get_available_buy_signals() -> list:
+    return list(BUY_SIGNAL_REGISTRY.keys())
+
+def get_available_sell_signals() -> list:
+    return list(SELL_SIGNAL_REGISTRY.keys())
+
+# Backward compat
+STRATEGY_REGISTRY = {}
+def get_strategy(name: str) -> BaseStrategy:
+    return list(BUY_SIGNAL_REGISTRY.values())[0]
 def get_available_strategies() -> list:
-    return list(STRATEGY_REGISTRY.keys())
+    return []
+
 
 
 # ==============================================================================
 # HỆ THỐNG SCANNER VÀ BACKTEST
 # ==============================================================================
 
-def get_buy_candidates(days: int = 3, target_date: str = None, method: str = Method1.name) -> pd.DataFrame:
+def get_buy_candidates(days: int = 3, target_date: str = None, buy_method: str = None) -> pd.DataFrame:
+    if buy_method is None:
+        buy_method = list(BUY_SIGNAL_REGISTRY.keys())[0]
     con    = duckdb.connect(DB_PATH, read_only=True)
     date_filter = f"AND time >= CURRENT_DATE - INTERVAL '{LOOKBACK_DAYS} days'"
     if target_date:
@@ -174,7 +224,7 @@ def get_buy_candidates(days: int = 3, target_date: str = None, method: str = Met
     con.close()
 
     candidates = []
-    strategy = get_strategy(method)
+    strategy = get_buy_signal(buy_method)
 
     for symbol, grp in df_raw.groupby('symbol'):
         grp = grp.sort_values('date').reset_index(drop=True)
@@ -220,7 +270,9 @@ def get_buy_candidates(days: int = 3, target_date: str = None, method: str = Met
     return df_candidates
 
 
-def get_sell_candidates(days: int = 3, target_date: str = None, method: str = Method1.name) -> pd.DataFrame:
+def get_sell_candidates(days: int = 3, target_date: str = None, sell_method: str = None) -> pd.DataFrame:
+    if sell_method is None:
+        sell_method = list(SELL_SIGNAL_REGISTRY.keys())[0]
     con = duckdb.connect(DB_PATH, read_only=True)
     date_filter = f"AND time >= CURRENT_DATE - INTERVAL '{LOOKBACK_DAYS} days'"
     if target_date:
@@ -240,7 +292,7 @@ def get_sell_candidates(days: int = 3, target_date: str = None, method: str = Me
     con.close()
 
     candidates = []
-    strategy = get_strategy(method)
+    strategy = get_sell_signal(sell_method)
 
     for symbol, grp in df_raw.groupby('symbol'):
         grp = grp.sort_values('date').reset_index(drop=True)
@@ -285,7 +337,12 @@ def get_sell_candidates(days: int = 3, target_date: str = None, method: str = Me
     return df_candidates
 
 
-def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str, bt_method: str = Method1.name) -> dict:
+def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
+                           buy_method: str = None, sell_method: str = None) -> dict:
+    if buy_method is None:
+        buy_method = list(BUY_SIGNAL_REGISTRY.keys())[0]
+    if sell_method is None:
+        sell_method = list(SELL_SIGNAL_REGISTRY.keys())[0]
     con = duckdb.connect(DB_PATH, read_only=True)
     
     # 1. Map timeframe -> date_filter
@@ -313,10 +370,13 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str, 
     # Loại bỏ các dòng bị trùng lặp ngày để tránh lỗi crash biểu đồ
     df = df.drop_duplicates(subset=['date'], keep='last')
 
-    # 2. Sử dụng Engine Chiến lược
-    strategy = get_strategy(bt_method)
-    df = strategy.prepare_data(df)
-    df = strategy.generate_signals(df)
+    # 2. Dùng tín hiệu Mua và Bán riêng biệt
+    buy_strategy = get_buy_signal(buy_method)
+    sell_strategy = get_sell_signal(sell_method)
+    df = buy_strategy.prepare_data(df)
+    df = buy_strategy.generate_signals(df)
+    df_sell = sell_strategy.generate_signals(df.copy())
+    df['sell_signal'] = df_sell['sell_signal']
     
     # Lọc lại data theo timeframe thực tế hiển thị
     if timeframe != "Tất cả":
