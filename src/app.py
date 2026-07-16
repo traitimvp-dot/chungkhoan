@@ -143,7 +143,7 @@ def show_chart_dialog_content(symbol):
         with col_tf:
             timeframe = st.pills(
                 "Khung thời gian", 
-                options=["6 Tháng", "1 Năm", "Tất cả"], 
+                options=["6 Tháng", "1 Năm", "3 Năm", "Tất cả"], 
                 default="1 Năm", 
                 key=f"tf_{symbol}", 
                 label_visibility="collapsed"
@@ -226,6 +226,8 @@ def show_chart_dialog_content(symbol):
                 start_date = end_date - pd.Timedelta(days=180)
             elif timeframe == "1 Năm":
                 start_date = end_date - pd.Timedelta(days=365)
+            elif timeframe == "3 Năm":
+                start_date = end_date - pd.Timedelta(days=1095)
             df_filtered = df_filtered[df_filtered.index >= start_date]
             
         with chart_container:
@@ -278,7 +280,7 @@ def show_chart_dialog_content(symbol):
                                 "position": "belowBar",
                                 "color": "#00e676",
                                 "shape": "arrowUp",
-                                "text": f"MUA ({active_signals['buy_method']})"
+                                "text": "MUA"
                             })
                     
                     if active_signals["show_sell"]:
@@ -293,7 +295,7 @@ def show_chart_dialog_content(symbol):
                                 "position": "aboveBar",
                                 "color": "#ff1744",
                                 "shape": "arrowDown",
-                                "text": f"BÁN ({active_signals['sell_method']})"
+                                "text": "BÁN"
                             })
                 
                 # Sắp xếp markers theo thời gian
