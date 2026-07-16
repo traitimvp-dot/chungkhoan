@@ -107,7 +107,7 @@ def load_market_overview():
     df = con.execute(query).df()
     con.close()
     df = df.drop_duplicates(subset=["Mã CP"], keep='last')
-    df = df[df["Sàn"] != "DELISTED"]
+    df = df[df["Sàn"].isin(["HOSE", "HNX"])]
     return df
 
 @st.cache_data(ttl=300)

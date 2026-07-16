@@ -149,6 +149,26 @@ class SellSignal1(IndicatorMixin, BaseStrategy):
         return df
 
 
+class SellSignal2(IndicatorMixin, BaseStrategy):
+    name = "Tín hiệu Bán 2"
+    description = "MA20 cắt xuống MA50 (Death Cross ngắn hạn)"
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        valid_sell = df['ma20'].notna() & df['ma50'].notna()
+        
+        # Lấy giá trị MA20 và MA50 của phiên trước
+        prev_ma20 = df['ma20'].shift(1)
+        prev_ma50 = df['ma50'].shift(1)
+        
+        # MA20 cắt xuống MA50: MA20 hiện tại < MA50 hiện tại VÀ MA20 trước đó >= MA50 trước đó
+        ma_cross_down = (df['ma20'] < df['ma50']) & (prev_ma20 >= prev_ma50)
+        
+        df['buy_signal'] = False
+        df['sell_signal'] = valid_sell & ma_cross_down
+        return df
+
+
 # ==============================================================================
 # REGISTRY TÍN HIỆU MUA / BÁN TÁCH BIỆT
 # ==============================================================================
@@ -158,7 +178,8 @@ BUY_SIGNAL_REGISTRY = {
 }
 
 SELL_SIGNAL_REGISTRY = {
-    SellSignal1.name: SellSignal1()
+    SellSignal1.name: SellSignal1(),
+    SellSignal2.name: SellSignal2()
 }
 
 # --- Backward-compat shim: STRATEGY_REGISTRY dùng cho code cũ chưa kịp migrate ---

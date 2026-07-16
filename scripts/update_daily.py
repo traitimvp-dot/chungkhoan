@@ -119,26 +119,20 @@ def fetch_and_save(symbol: str, start_date_str: str, today_str: str, mkt: Market
             time.sleep(15)
 
 
-def update_daily(max_workers: int = 5):
+def update_daily(max_workers: int = 1):
     """
-    Cập nhật dữ liệu hàng ngày với đa luồng + Rate Limiter.
-
-    Giới hạn Free tier vnstock:
-        - 60 req/phút  → Rate Limiter giữ ở mức 50 req/phút (có biên an toàn)
-        - 10.000 req/ngày → 1.500 mã/ngày = 1.500 req → AN TOÀN
-        - 100.000 req/tháng → 1.500 × 22 ngày = 33.000 req → AN TOÀN
-
-    max_workers=5: 5 luồng song song, Rate Limiter tự cân bằng tốc độ tổng.
+    Cập nhật dữ liệu hàng ngày tuần tự để tránh Rate Limit của vnstock.
     """
     global _success, _skipped, _failed, _rate_limiter
     _success = 0
     _skipped = 0
     _failed = 0
 
-    # Khởi tạo Rate Limiter: 50 req/phút (dưới giới hạn 60 của free tier)
-    _rate_limiter = RateLimiter(max_per_minute=50)
+    # Khởi tạo Rate Limiter: 40 req/phút để an toàn
+    _rate_limiter = RateLimiter(max_per_minute=40)
 
     lock_file = os.path.join(BASE_DIR, "scripts", "update.lock")
+
     if os.path.exists(lock_file):
         print("Dang co tien trinh cap nhat chay ngam. Bo qua.")
         return
@@ -153,7 +147,7 @@ def update_daily(max_workers: int = 5):
                 FROM company_info c 
                 LEFT JOIN historical_prices h ON c."Mã CP" = h.symbol 
                 WHERE length(c."Mã CP") = 3 
-                  AND (c."Sàn" IS NULL OR c."Sàn" != 'DELISTED')
+                  AND c."Sàn" IN ('HOSE', 'HNX')
                 GROUP BY c."Mã CP"
             """
             df_max = con.execute(query_max).df()
@@ -188,14 +182,35 @@ def update_daily(max_workers: int = 5):
         print(f"Chay song song voi {max_workers} luong...\n")
 
         t_start = time.time()
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {
-                executor.submit(fetch_and_save, sym, start, today_str, mkt, i, total): sym
-                for i, (sym, start) in enumerate(tasks)
-            }
-            for future in as_completed(futures):
-                result = future.result()
-                print(result)
+        # Dùng vòng lặp đồng bộ thay vì ThreadPoolExecutor để kiểm soát hoàn toàn rate limit
+        for i, (sym, start) in enumerate(tasks):
+            try:
+                # Ngủ cứng 1.5 giây giữa mỗi request (tối đa 40 req/phút)
+                time.sleep(1.5)
+                
+                df_res = mkt.equity(sym).ohlcv(start=start, end=today_str)
+                if df_res is not None and not df_res.empty:
+                    df_res['symbol'] = sym
+                    df_res = df_res[['time', 'open', 'high', 'low', 'close', 'volume', 'symbol']]
+                    min_time_in_df = df_res['time'].min().strftime("%Y-%m-%d %H:%M:%S")
+
+                    with duckdb.connect(DB_PATH) as con_write:
+                        con_write.execute(f"DELETE FROM historical_prices WHERE symbol = '{sym}' AND time >= '{min_time_in_df}'")
+                        con_write.execute("INSERT INTO historical_prices SELECT * FROM df_res")
+                    
+                    _success += 1
+                    print(f"[{i+1}/{total}] OK {sym} ({start} -> {today_str})")
+                else:
+                    _skipped += 1
+                    print(f"[{i+1}/{total}] SKIP {sym} (Chua co du lieu moi)")
+            
+            except SystemExit:
+                # Bắt SystemExit nếu vnstock ép thoát chương trình
+                print(f"[Rate Limit / SystemExit] vnstock đã ép dừng khi gọi {sym}. Tạm nghỉ 65 giây...")
+                time.sleep(65)
+            except Exception as e:
+                _failed += 1
+                print(f"[{i+1}/{total}] FAIL {sym}: {e}")
 
         elapsed = time.time() - t_start
         print(f"\n=== HOAN TAT ===")
