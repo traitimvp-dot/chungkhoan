@@ -29,9 +29,17 @@ _spec.loader.exec_module(_strategy_mod)
 def scan_buy_signals(target_date: str = None):
     return _strategy_mod.get_buy_candidates(days=3, target_date=target_date)
 
+@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu MUA 2 (tốn khoảng 3-5s)...")
+def scan_buy_signals2(target_date: str = None):
+    return _strategy_mod.get_buy_candidates(days=3, target_date=target_date, buy_method="Tín hiệu Mua 2")
+
 @st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu BÁN (tốn khoảng 3-5s)...")
 def scan_sell_signals(target_date: str = None):
     return _strategy_mod.get_sell_candidates(days=3, target_date=target_date)
+
+@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu BÁN 2 (tốn khoảng 3-5s)...")
+def scan_sell_signals2(target_date: str = None):
+    return _strategy_mod.get_sell_candidates(days=3, target_date=target_date, sell_method="Tín hiệu Bán 2")
 
 
 
@@ -657,13 +665,31 @@ if not df_market.empty:
     def on_filter_buy_change():
         if st.session_state.filter_buy:
             st.session_state.filter_sell = False
+            st.session_state.filter_sell2 = False
+            st.session_state.filter_buy2 = False
             
+    def on_filter_buy2_change():
+        if st.session_state.filter_buy2:
+            st.session_state.filter_sell = False
+            st.session_state.filter_sell2 = False
+            st.session_state.filter_buy = False
+
     def on_filter_sell_change():
         if st.session_state.filter_sell:
             st.session_state.filter_buy = False
+            st.session_state.filter_buy2 = False
+            st.session_state.filter_sell2 = False
             
-    st.sidebar.checkbox("Tín hiệu MUA (3 ngày)", key="filter_buy", on_change=on_filter_buy_change)
-    st.sidebar.checkbox("Tín hiệu BÁN (3 ngày)", key="filter_sell", on_change=on_filter_sell_change)
+    def on_filter_sell2_change():
+        if st.session_state.filter_sell2:
+            st.session_state.filter_buy = False
+            st.session_state.filter_buy2 = False
+            st.session_state.filter_sell = False
+            
+    st.sidebar.checkbox("Tín hiệu MUA 1 (3 ngày)", key="filter_buy", on_change=on_filter_buy_change)
+    st.sidebar.checkbox("Tín hiệu MUA 2 (3 ngày)", key="filter_buy2", on_change=on_filter_buy2_change)
+    st.sidebar.checkbox("Tín hiệu BÁN 1 (3 ngày)", key="filter_sell", on_change=on_filter_sell_change)
+    st.sidebar.checkbox("Tín hiệu BÁN 2 (3 ngày)", key="filter_sell2", on_change=on_filter_sell2_change)
 
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
@@ -722,19 +748,35 @@ if not df_market.empty:
     else:
         target_date_str = None
             
-    if st.session_state.filter_buy:
+    if st.session_state.get("filter_buy", False):
         df_buy = scan_buy_signals(target_date_str)
         if not df_buy.empty:
-            df_buy['TH Mua'] = 'Mua'
+            df_buy['TH Mua'] = 'Mua 1'
             df_market = df_market.merge(df_buy[['Mã CP', 'Ngày', 'TH Mua']].rename(columns={'Ngày': 'Ngày Mua'}), on='Mã CP', how='inner')
         else:
             df_market = df_market.iloc[0:0]
             
-    if st.session_state.filter_sell:
+    if st.session_state.get("filter_buy2", False):
+        df_buy2 = scan_buy_signals2(target_date_str)
+        if not df_buy2.empty:
+            df_buy2['TH Mua'] = 'Mua 2'
+            df_market = df_market.merge(df_buy2[['Mã CP', 'Ngày', 'TH Mua']].rename(columns={'Ngày': 'Ngày Mua'}), on='Mã CP', how='inner')
+        else:
+            df_market = df_market.iloc[0:0]
+            
+    if st.session_state.get("filter_sell", False):
         df_sell = scan_sell_signals(target_date_str)
         if not df_sell.empty:
-            df_sell['TH Bán'] = 'Bán'
+            df_sell['TH Bán'] = 'Bán 1'
             df_market = df_market.merge(df_sell[['Mã CP', 'Ngày', 'TH Bán']].rename(columns={'Ngày': 'Ngày Bán'}), on='Mã CP', how='inner')
+        else:
+            df_market = df_market.iloc[0:0]
+            
+    if st.session_state.get("filter_sell2", False):
+        df_sell2 = scan_sell_signals2(target_date_str)
+        if not df_sell2.empty:
+            df_sell2['TH Bán'] = 'Bán 2'
+            df_market = df_market.merge(df_sell2[['Mã CP', 'Ngày', 'TH Bán']].rename(columns={'Ngày': 'Ngày Bán'}), on='Mã CP', how='inner')
         else:
             df_market = df_market.iloc[0:0]
         
@@ -774,17 +816,25 @@ if not df_market.empty:
         selected_industries = st.session_state.get("sel_industry", [])
         if selected_industries:
             active_filters.append(f"Ngành: {', '.join(selected_industries)}")
-    if st.session_state.filter_buy:
-        active_filters.append(f"Tín hiệu MUA (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu MUA (3 ngày)")
-    if st.session_state.filter_sell:
-        active_filters.append(f"Tín hiệu BÁN (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu BÁN (3 ngày)")
+    if st.session_state.get("filter_buy", False):
+        active_filters.append(f"Tín hiệu MUA 1 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu MUA 1 (3 ngày)")
+    if st.session_state.get("filter_buy2", False):
+        active_filters.append(f"Tín hiệu MUA 2 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu MUA 2 (3 ngày)")
+    if st.session_state.get("filter_sell", False):
+        active_filters.append(f"Tín hiệu BÁN 1 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu BÁN 1 (3 ngày)")
+    if st.session_state.get("filter_sell2", False):
+        active_filters.append(f"Tín hiệu BÁN 2 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu BÁN 2 (3 ngày)")
         
     if active_filters:
         msg = "🔍 **Đang lọc theo:** " + " | ".join(active_filters)
-        if st.session_state.filter_buy:
+        if st.session_state.get("filter_buy", False):
             msg += " | 🟢 **Tín hiệu Mua 1:** Breakout 20 phiên + KL ≥ 1.5x + RSI < 70 + Trên MA20"
-        if st.session_state.filter_sell:
+        if st.session_state.get("filter_buy2", False):
+            msg += " | 🟢 **Tín hiệu Mua 2:** MA20 cắt lên MA50 (Golden Cross)"
+        if st.session_state.get("filter_sell", False):
             msg += " | 🔴 **Tín hiệu Bán 1:** Gãy MA20/MA50, MACD cắt xuống, hoặc RSI > 70 kèm Vol xả"
+        if st.session_state.get("filter_sell2", False):
+            msg += " | 🔴 **Tín hiệu Bán 2:** MA20 cắt xuống MA50 (Death Cross)"
         st.info(msg)
     else:
         st.markdown("💡 *Bấm vào một dòng bất kỳ để xem biểu đồ kỹ thuật chi tiết*")

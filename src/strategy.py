@@ -120,6 +120,26 @@ class BuySignal1(IndicatorMixin, BaseStrategy):
         return df
 
 
+class BuySignal2(IndicatorMixin, BaseStrategy):
+    name = "Tín hiệu Mua 2"
+    description = "MA20 cắt lên MA50 (Golden Cross ngắn hạn)"
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        valid_buy = df['ma20'].notna() & df['ma50'].notna()
+        
+        # Lấy giá trị MA20 và MA50 của phiên trước
+        prev_ma20 = df['ma20'].shift(1)
+        prev_ma50 = df['ma50'].shift(1)
+        
+        # MA20 cắt lên MA50: MA20 hiện tại > MA50 hiện tại VÀ MA20 trước đó <= MA50 trước đó
+        ma_cross_up = (df['ma20'] > df['ma50']) & (prev_ma20 <= prev_ma50)
+        
+        df['buy_signal'] = valid_buy & ma_cross_up
+        df['sell_signal'] = False
+        return df
+
+
 class SellSignal1(IndicatorMixin, BaseStrategy):
     name = "Tín hiệu Bán 1"
     description = "Gãy MA20/MA50, MACD cắt xuống, hoặc RSI > 70 + Vol xả ≥ 1.5x"
@@ -174,7 +194,8 @@ class SellSignal2(IndicatorMixin, BaseStrategy):
 # ==============================================================================
 
 BUY_SIGNAL_REGISTRY = {
-    BuySignal1.name: BuySignal1()
+    BuySignal1.name: BuySignal1(),
+    BuySignal2.name: BuySignal2()
 }
 
 SELL_SIGNAL_REGISTRY = {
