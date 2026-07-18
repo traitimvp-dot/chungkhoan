@@ -140,6 +140,25 @@ class BuySignal2(IndicatorMixin, BaseStrategy):
         return df
 
 
+class BuySignal3(IndicatorMixin, BaseStrategy):
+    name = "Tín hiệu Mua 3"
+    description = "Pullback Uptrend: Chỉnh chạm MA20 trong sóng tăng mạnh (MA20>MA50>MA200)"
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        # Mua khi: MA20 > MA50 > MA200 (Uptrend mạnh) VÀ Giá cắt ngược lên MA20 (Bật tăng sau nhịp chỉnh)
+        valid = df['ma20'].notna() & df['ma50'].notna() & df['ma200'].notna()
+        uptrend = (df['ma20'] > df['ma50']) & (df['ma50'] > df['ma200'])
+        
+        prev_close = df['close'].shift(1)
+        prev_ma20 = df['ma20'].shift(1)
+        price_cross_ma20_up = (df['close'] > df['ma20']) & (prev_close <= prev_ma20)
+        
+        df['buy_signal'] = valid & uptrend & price_cross_ma20_up
+        df['sell_signal'] = False
+        return df
+
+
 class SellSignal1(IndicatorMixin, BaseStrategy):
     name = "Tín hiệu Bán 1"
     description = "Gãy MA20/MA50, MACD cắt xuống, hoặc RSI > 70 + Vol xả ≥ 1.5x"
@@ -189,18 +208,41 @@ class SellSignal2(IndicatorMixin, BaseStrategy):
         return df
 
 
+class SellSignal3(IndicatorMixin, BaseStrategy):
+    name = "Tín hiệu Bán 3"
+    description = "Gãy nền MA50 hoặc MA20 cắt xuống MA50"
+    
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        # Bán khi: Giá gãy MA50 (Mất nền giá trung hạn) HOẶC MA20 cắt xuống MA50
+        valid = df['ma20'].notna() & df['ma50'].notna()
+        
+        prev_close = df['close'].shift(1)
+        prev_ma50 = df['ma50'].shift(1)
+        price_break_ma50 = (df['close'] < df['ma50']) & (prev_close >= prev_ma50)
+        
+        prev_ma20 = df['ma20'].shift(1)
+        ma_cross_down = (df['ma20'] < df['ma50']) & (prev_ma20 >= prev_ma50)
+        
+        df['buy_signal'] = False
+        df['sell_signal'] = valid & (price_break_ma50 | ma_cross_down)
+        return df
+
+
 # ==============================================================================
 # REGISTRY TÍN HIỆU MUA / BÁN TÁCH BIỆT
 # ==============================================================================
 
 BUY_SIGNAL_REGISTRY = {
     BuySignal1.name: BuySignal1(),
-    BuySignal2.name: BuySignal2()
+    BuySignal2.name: BuySignal2(),
+    BuySignal3.name: BuySignal3()
 }
 
 SELL_SIGNAL_REGISTRY = {
     SellSignal1.name: SellSignal1(),
-    SellSignal2.name: SellSignal2()
+    SellSignal2.name: SellSignal2(),
+    SellSignal3.name: SellSignal3()
 }
 
 # --- Backward-compat shim: STRATEGY_REGISTRY dùng cho code cũ chưa kịp migrate ---
