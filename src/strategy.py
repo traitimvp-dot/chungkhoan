@@ -485,6 +485,27 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
                     in_position = False
                     shares = 0
 
+    # Tự động chốt nếu còn cầm cổ phiếu cuối kỳ
+    if in_position:
+        sell_price = df.iloc[-1]['close']
+        sell_date = df.iloc[-1]['date']
+        capital += (shares * sell_price)
+        
+        profit = (sell_price - buy_price) * shares
+        profit_pct = (sell_price - buy_price) / buy_price * 100
+        
+        trades.append({
+            "Ngày Mua": buy_date,
+            "Giá Mua": buy_price,
+            "Khối lượng": shares,
+            "Ngày Bán": sell_date,
+            "Giá Bán": sell_price,
+            "Lãi/Lỗ (%)": round(profit_pct, 2),
+            "Tiền Lãi/Lỗ": int(profit)
+        })
+        in_position = False
+        shares = 0
+
     # 4. Tính metrics
     df_trades = pd.DataFrame(trades)
     
@@ -493,12 +514,7 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
         winning_trades = len(df_trades[df_trades["Lãi/Lỗ (%)"] > 0])
         win_rate = winning_trades / total_trades * 100
         
-        # Nếu đang cầm cổ phiếu (chưa chốt), tính luôn vào vốn cuối cùng (Mark-to-market)
         final_capital = capital
-        if in_position:
-            last_price = df.iloc[-1]['close']
-            final_capital += shares * last_price
-            
         total_profit_pct = (final_capital - initial_capital) / initial_capital * 100
     else:
         total_trades = 0
