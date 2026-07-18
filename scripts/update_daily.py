@@ -74,7 +74,7 @@ def fetch_and_save(symbol: str, start_date_str: str, today_str: str, mkt: Market
             # Tuân thủ rate limit trước khi gọi API
             _rate_limiter.acquire()
 
-            df = mkt.equity(symbol).ohlcv(start=start_date_str, end=today_str)
+            df = mkt.equity(symbol).ohlcv(start=start_date_str, end=today_str, count=3000)
             if df is not None and not df.empty:
                 df['symbol'] = symbol
                 df = df[['time', 'open', 'high', 'low', 'close', 'volume', 'symbol']]
@@ -188,7 +188,7 @@ def update_daily(max_workers: int = 1):
                 # Ngủ cứng 1.5 giây giữa mỗi request (tối đa 40 req/phút)
                 time.sleep(1.5)
                 
-                df_res = mkt.equity(sym).ohlcv(start=start, end=today_str)
+                df_res = mkt.equity(sym).ohlcv(start=start, end=today_str, count=3000)
                 if df_res is not None and not df_res.empty:
                     df_res['symbol'] = sym
                     df_res = df_res[['time', 'open', 'high', 'low', 'close', 'volume', 'symbol']]
