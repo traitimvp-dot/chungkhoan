@@ -232,6 +232,18 @@ def get_capital_history(symbol):
         print(f"Lỗi tải capital history cho {symbol}: {e}")
     return pd.DataFrame()
 
+@st.cache_data(ttl=86400, show_spinner="Đang tải KQKD...")
+def get_income_statement(symbol):
+    try:
+        from vnstock.ui import Fundamental
+        fun = Fundamental()
+        df = fun.equity(symbol).income_statement(period="quarter")
+        if df is not None and not df.empty:
+            return df
+    except Exception as e:
+        print(f"Lỗi tải KQKD cho {symbol}: {e}")
+    return pd.DataFrame()
+
 def show_chart_dialog_content(symbol):
     df = load_data(symbol)
     
@@ -761,6 +773,37 @@ def show_chart_dialog_content(symbol):
             
             with st.expander("Lịch sử Hình thành"):
                 st.markdown(str(profile.get('history', 'Chưa cập nhật')))
+
+            with st.expander("📊 Báo cáo Kết quả Kinh doanh (Các Quý gần nhất)", expanded=True):
+                st.info("Lưu ý: Gói tài khoản Vnstock hiện tại (Free) chỉ hỗ trợ lấy tối đa 8 Quý gần nhất. Để xem từ năm 2020, vui lòng sử dụng gói tài trợ (Sponsor).")
+                df_income = get_income_statement(symbol)
+                if df_income.empty:
+                    st.warning("Chưa có dữ liệu Kết quả Kinh doanh.")
+                else:
+                    if 'item_id' in df_income.columns:
+                        df_income_display = df_income.drop(columns=['item_id'])
+                    else:
+                        df_income_display = df_income.copy()
+                    df_income_display = df_income_display.rename(columns={'item': 'Chỉ tiêu'})
+                    
+                    # Format các cột số thành có dấu phẩy ngăn cách hàng nghìn
+                    cols_format = {}
+                    
+                    # Sắp xếp các cột quý theo thứ tự thời gian (tăng dần)
+                    quarter_cols = [col for col in df_income_display.columns if col != 'Chỉ tiêu']
+                    quarter_cols.sort()
+                    df_income_display = df_income_display[['Chỉ tiêu'] + quarter_cols]
+                    
+                    for col in df_income_display.columns:
+                        if col != 'Chỉ tiêu':
+                            cols_format[col] = st.column_config.NumberColumn(format="%,.0f")
+                            
+                    st.dataframe(
+                        df_income_display, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        column_config=cols_format
+                    )
 
     with tab5:
         st.markdown(f"### 📅 Lịch sử Sự kiện & Tăng vốn - {symbol}")
