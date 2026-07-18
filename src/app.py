@@ -41,6 +41,24 @@ def scan_sell_signals(target_date: str = None):
 def scan_sell_signals2(target_date: str = None):
     return _strategy_mod.get_sell_candidates(days=3, target_date=target_date, sell_method="Tín hiệu Bán 2")
 
+@st.cache_data(ttl=1801, show_spinner="Đang mô phỏng Backtest cho danh sách hiện tại...")
+def run_symbols_backtest(symbols: tuple, buy_method: str, sell_method: str):
+    results = []
+    for sym in symbols:
+        res = _strategy_mod.run_portfolio_backtest(sym, 100000000, "Tất cả", buy_method, sell_method)
+        metrics = res.get("metrics")
+        if metrics:
+            results.append({
+                "Mã CP": sym,
+                "% Lãi/Lỗ": round(metrics["total_profit_pct"], 2),
+                "Số lệnh": metrics["total_trades"],
+                "Tỉ lệ Thắng": round(metrics["win_rate"], 2)
+            })
+            
+    df_results = pd.DataFrame(results)
+    return df_results
+
+
 
 
 get_buy_candidates = _strategy_mod.get_buy_candidates
@@ -690,6 +708,14 @@ if not df_market.empty:
     st.sidebar.checkbox("Tín hiệu MUA 2 (3 ngày)", key="filter_buy2", on_change=on_filter_buy2_change)
     st.sidebar.checkbox("Tín hiệu BÁN 1 (3 ngày)", key="filter_sell", on_change=on_filter_sell_change)
     st.sidebar.checkbox("Tín hiệu BÁN 2 (3 ngày)", key="filter_sell2", on_change=on_filter_sell2_change)
+    
+    st.sidebar.checkbox("Lọc theo Backtest toàn TT", key="filter_strategy")
+    if st.session_state.get("filter_strategy", False):
+        st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 5px; font-weight: bold;'>Tín hiệu Backtest</p>", unsafe_allow_html=True)
+        buy_opts = _strategy_mod.get_available_buy_signals()
+        sell_opts = _strategy_mod.get_available_sell_signals()
+        st.sidebar.selectbox("Tín hiệu Mua", buy_opts, key="bt_buy_sig", label_visibility="collapsed")
+        st.sidebar.selectbox("Tín hiệu Bán", sell_opts, key="bt_sell_sig", label_visibility="collapsed")
 
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
@@ -779,6 +805,17 @@ if not df_market.empty:
             df_market = df_market.merge(df_sell2[['Mã CP', 'Ngày', 'TH Bán']].rename(columns={'Ngày': 'Ngày Bán'}), on='Mã CP', how='inner')
         else:
             df_market = df_market.iloc[0:0]
+            
+    if st.session_state.get("filter_strategy", False):
+        bt_buy = st.session_state.get("bt_buy_sig")
+        bt_sell = st.session_state.get("bt_sell_sig")
+        if bt_buy and bt_sell:
+            current_symbols = tuple(df_market['Mã CP'].tolist())
+            if current_symbols:
+                df_bt = run_symbols_backtest(current_symbols, bt_buy, bt_sell)
+                if not df_bt.empty:
+                    df_market = df_market.merge(df_bt, on='Mã CP', how='inner')
+                    df_market = df_market.sort_values(by="% Lãi/Lỗ", ascending=False)
         
     st.sidebar.markdown("---")
     st.sidebar.subheader("🔄 Cập nhật Dữ liệu")
@@ -824,6 +861,10 @@ if not df_market.empty:
         active_filters.append(f"Tín hiệu BÁN 1 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu BÁN 1 (3 ngày)")
     if st.session_state.get("filter_sell2", False):
         active_filters.append(f"Tín hiệu BÁN 2 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu BÁN 2 (3 ngày)")
+    if st.session_state.get("filter_strategy", False):
+        bt_buy = st.session_state.get("bt_buy_sig")
+        bt_sell = st.session_state.get("bt_sell_sig")
+        active_filters.append(f"Backtest {bt_buy} & {bt_sell}")
         
     if active_filters:
         msg = "🔍 **Đang lọc theo:** " + " | ".join(active_filters)
