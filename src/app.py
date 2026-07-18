@@ -11,6 +11,8 @@ import sys
 import time
 import datetime
 import importlib.util
+from vnstock.ui import Reference
+from vnstock import Company
 
 # Đường dẫn tuyệt đối chuẩn xác
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -150,6 +152,78 @@ def load_data(symbol):
         df = df[~df.index.duplicated(keep='last')]
     return df
 
+@st.cache_data(ttl=86400, show_spinner="Đang tải thông tin cơ bản...")
+def get_or_fetch_company_profile(symbol):
+    con = duckdb.connect(DB_PATH)
+    # Check if table exists
+    tables = con.execute("SHOW TABLES").df()
+    if 'company_profile' not in tables['name'].values:
+        import sys
+        sys.path.append(BASE_DIR)
+        from scripts.update_profile import init_db
+        init_db(con)
+        
+    query = f"SELECT * FROM company_profile WHERE symbol = '{symbol}'"
+    df = con.execute(query).df()
+    
+    if df.empty:
+        # Fetch on demand
+        ref = Reference()
+        try:
+            df_info = ref.company(symbol).info()
+            if df_info is not None and not df_info.empty:
+                df_info['symbol'] = symbol
+                cols = [
+                    'symbol', 'business_model', 'founded_date', 'charter_capital',
+                    'number_of_employees', 'listing_date', 'par_value', 'exchange',
+                    'listing_price', 'listed_volume', 'ceo_name', 'ceo_position',
+                    'inspector_name', 'inspector_position', 'establishment_license',
+                    'business_code', 'tax_id', 'auditor', 'company_type', 'address',
+                    'phone', 'fax', 'email', 'website', 'branches', 'history',
+                    'free_float_percentage', 'free_float', 'outstanding_shares', 'as_of_date'
+                ]
+                for c in cols:
+                    if c not in df_info.columns:
+                        df_info[c] = None
+                df_info = df_info[cols]
+                con.execute(f"DELETE FROM company_profile WHERE symbol = '{symbol}'")
+                con.execute("INSERT INTO company_profile SELECT * FROM df_info")
+                df = df_info
+        except Exception as e:
+            st.error(f"Lỗi tải thông tin cơ bản: {e}")
+            
+    con.close()
+    
+    if not df.empty:
+        return df.iloc[0].to_dict()
+    return None
+
+@st.cache_data(ttl=86400, show_spinner="Đang tải sự kiện...")
+def get_company_events(symbol):
+    try:
+        comp = Company(source="VCI", symbol=symbol)
+        df_events = comp.events()
+        if df_events is not None and not df_events.empty:
+            # Lọc các sự kiện liên quan đến cổ tức (Cash Dividend, Stock Dividend) và phát hành (Issue)
+            # Dựa vào event_list_name hoặc category
+            df_div_issue = df_events[df_events['category'].str.contains('DIVIDEND|ISSUE|RIGHT', case=False, na=False) | 
+                                     df_events['action_type_en'].str.contains('Dividend|Issue|Right', case=False, na=False)]
+            return df_div_issue
+    except Exception as e:
+        print(f"Lỗi tải events cho {symbol}: {e}")
+    return pd.DataFrame()
+
+@st.cache_data(ttl=86400, show_spinner="Đang tải lịch sử tăng vốn...")
+def get_capital_history(symbol):
+    try:
+        ref = Reference()
+        df_cap = ref.company(symbol).capital_history()
+        if df_cap is not None and not df_cap.empty:
+            return df_cap
+    except Exception as e:
+        print(f"Lỗi tải capital history cho {symbol}: {e}")
+    return pd.DataFrame()
+
 def show_chart_dialog_content(symbol):
     df = load_data(symbol)
     
@@ -158,7 +232,7 @@ def show_chart_dialog_content(symbol):
         return
 
 
-    tab1, tab2, tab3 = st.tabs(["📈 Biểu đồ Kỹ thuật", "📋 Lịch sử Giá", "🧪 Backtest Chiến lược"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Biểu đồ Kỹ thuật", "📋 Lịch sử Giá", "🧪 Backtest Chiến lược", "🏢 Thông tin Cơ bản", "📅 Lịch sử & Sự kiện"])
     
     with tab1:
         # Tạo sẵn vùng chứa cho biểu đồ để render sau khi đã lấy được giá trị timeframe bên dưới
@@ -637,6 +711,112 @@ def show_chart_dialog_content(symbol):
                             "Lãi/Lỗ (%)": st.column_config.NumberColumn(format="%.2f%%")
                         }
                     )
+
+    with tab4:
+        profile = get_or_fetch_company_profile(symbol)
+        
+        # Lấy thêm tên công ty từ bảng company_info
+        company_name = ""
+        try:
+            con_tmp = duckdb.connect(DB_PATH, read_only=True)
+            res = con_tmp.execute(f"SELECT \"Tên CTY\" FROM company_info WHERE \"Mã CP\" = '{symbol}'").fetchone()
+            if res:
+                company_name = f" - {res[0]}"
+            con_tmp.close()
+        except Exception:
+            pass
+            
+        if not profile:
+            st.warning(f"Không tìm thấy thông tin cơ bản cho mã {symbol}.")
+        else:
+            st.markdown(f"### 🏢 Thông tin Cơ bản: {symbol}{company_name}")
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Ngày thành lập", str(profile.get('founded_date', 'N/A')))
+            c2.metric("Vốn điều lệ (Tỷ VNĐ)", f"{profile.get('charter_capital', 0):,.0f}" if profile.get('charter_capital') else "N/A")
+            c3.metric("Số nhân viên", f"{profile.get('number_of_employees', 0):,.0f}" if profile.get('number_of_employees') else "N/A")
+            c4.metric("Ngày niêm yết", str(profile.get('listing_date', 'N/A')))
+            
+            c5, c6, c7, c8 = st.columns(4)
+            c5.metric("Sàn", str(profile.get('exchange', 'N/A')))
+            c6.metric("Giá chào sàn", f"{profile.get('listing_price', 0):,.0f}" if profile.get('listing_price') else "N/A")
+            c7.metric("KL Niêm yết (Triệu CP)", f"{profile.get('listed_volume', 0):,.1f}" if profile.get('listed_volume') else "N/A")
+            c8.metric("Chủ tịch HĐQT", str(profile.get('ceo_name', 'N/A')))
+            
+            st.markdown("---")
+            
+            st.markdown(f"**Website:** [{profile.get('website', 'N/A')}]({profile.get('website', '')})")
+            st.markdown(f"**Địa chỉ:** {profile.get('address', 'N/A')}")
+            
+            st.markdown("#### 🏢 Mô hình Kinh doanh")
+            st.info(str(profile.get('business_model', 'Chưa cập nhật')))
+            
+            with st.expander("Lịch sử Hình thành"):
+                st.markdown(str(profile.get('history', 'Chưa cập nhật')))
+
+    with tab5:
+        st.markdown(f"### 📅 Lịch sử Sự kiện & Tăng vốn - {symbol}")
+        
+        col_ev, col_cap = st.columns([6, 4])
+        
+        with col_ev:
+            st.markdown("#### Lịch sử Cổ tức & Phát hành")
+            df_events = get_company_events(symbol)
+            if df_events.empty:
+                st.info("Chưa có dữ liệu sự kiện hoặc công ty chưa trả cổ tức.")
+            else:
+                # Select important columns: public_date or exright_date, event_title_vi, exercise_ratio, value_per_share
+                cols_to_show = {}
+                if 'exright_date' in df_events.columns:
+                    cols_to_show['exright_date'] = "Ngày GDKHQ"
+                if 'payout_date' in df_events.columns:
+                    cols_to_show['payout_date'] = "Ngày Thực Hiện"
+                if 'event_title_vi' in df_events.columns:
+                    cols_to_show['event_title_vi'] = "Sự Kiện"
+                if 'exercise_ratio' in df_events.columns:
+                    cols_to_show['exercise_ratio'] = "Tỷ Lệ"
+                if 'value_per_share' in df_events.columns:
+                    cols_to_show['value_per_share'] = "Giá Trị (VNĐ)"
+                    
+                df_events_display = df_events[list(cols_to_show.keys())].rename(columns=cols_to_show)
+                
+                # Format dates to string
+                if "Ngày GDKHQ" in df_events_display.columns:
+                    df_events_display["Ngày GDKHQ"] = pd.to_datetime(df_events_display["Ngày GDKHQ"]).dt.strftime('%d/%m/%Y')
+                if "Ngày Thực Hiện" in df_events_display.columns:
+                    df_events_display["Ngày Thực Hiện"] = pd.to_datetime(df_events_display["Ngày Thực Hiện"]).dt.strftime('%d/%m/%Y')
+                
+                st.dataframe(
+                    df_events_display,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Giá Trị (VNĐ)": st.column_config.NumberColumn(format="%,.0f")
+                    }
+                )
+
+        with col_cap:
+            st.markdown("#### Lịch sử Thay đổi Vốn")
+            df_cap = get_capital_history(symbol)
+            if df_cap.empty:
+                st.info("Chưa có dữ liệu thay đổi vốn.")
+            else:
+                df_cap_display = df_cap.copy()
+                if 'date' in df_cap_display.columns:
+                    df_cap_display['date'] = pd.to_datetime(df_cap_display['date']).dt.strftime('%d/%m/%Y').fillna('N/A')
+                
+                cols_cap = {'date': 'Ngày', 'charter_capital': 'Vốn Điều Lệ (VNĐ)'}
+                
+                df_cap_display = df_cap_display[list(cols_cap.keys())].rename(columns=cols_cap)
+                st.dataframe(
+                    df_cap_display,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Vốn Điều Lệ (VNĐ)": st.column_config.NumberColumn(format="%,.0f")
+                    }
+                )
+
 # --- PHẦN GIAO DIỆN CHÍNH ---
 
 
