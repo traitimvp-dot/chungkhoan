@@ -386,21 +386,11 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
     if sell_method is None:
         sell_method = list(SELL_SIGNAL_REGISTRY.keys())[0]
     con = duckdb.connect(DB_PATH, read_only=True)
-    
-    # 1. Map timeframe -> date_filter
-    date_filter = ""
-    if timeframe == "1 Năm":
-        date_filter = "AND time >= CURRENT_DATE - INTERVAL '1 YEAR' - INTERVAL '200 DAYS'"
-    elif timeframe == "3 Năm":
-        date_filter = "AND time >= CURRENT_DATE - INTERVAL '3 YEARS' - INTERVAL '200 DAYS'"
-    elif timeframe == "5 Năm":
-        date_filter = "AND time >= CURRENT_DATE - INTERVAL '5 YEARS' - INTERVAL '200 DAYS'"
-        
+    # Luôn lấy toàn bộ thời gian từ DB để tính toán Indicator chính xác nhất
     query = f"""
         SELECT symbol, time::DATE as date, close, volume, high, low, open
         FROM historical_prices
         WHERE symbol = '{symbol}'
-        {date_filter}
         ORDER BY time
     """
     df = con.execute(query).df()
