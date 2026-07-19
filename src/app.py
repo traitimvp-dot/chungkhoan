@@ -51,6 +51,10 @@ def scan_buy_signals3(target_date: str = None):
 def scan_sell_signals3(target_date: str = None):
     return _strategy_mod.get_sell_candidates(days=3, target_date=target_date, sell_method="Tín hiệu Bán 3")
 
+@st.cache_data(ttl=1801, show_spinner="Đang quét tín hiệu MUA 4 (tốn khoảng 3-5s)...")
+def scan_buy_signals4(target_date: str = None):
+    return _strategy_mod.get_buy_candidates(days=3, target_date=target_date, buy_method="Tín hiệu Mua 4")
+
 @st.cache_data(ttl=1801, show_spinner="Đang mô phỏng Backtest cho danh sách hiện tại...")
 def run_symbols_backtest(symbols: tuple, timeframe: str, buy_method: str, sell_method: str):
     results = []
@@ -900,6 +904,12 @@ if not df_market.empty:
         st.session_state.filter_industry = False
     if "filter_buy" not in st.session_state:
         st.session_state.filter_buy = False
+    if "filter_buy2" not in st.session_state:
+        st.session_state.filter_buy2 = False
+    if "filter_buy3" not in st.session_state:
+        st.session_state.filter_buy3 = False
+    if "filter_buy4" not in st.session_state:
+        st.session_state.filter_buy4 = False
     if "filter_sell" not in st.session_state:
         st.session_state.filter_sell = False
     if "filter_date" not in st.session_state:
@@ -916,6 +926,7 @@ if not df_market.empty:
         if st.session_state.filter_buy:
             st.session_state.filter_buy2 = False
             st.session_state.filter_buy3 = False
+            st.session_state.filter_buy4 = False
             st.session_state.filter_sell = False
             st.session_state.filter_sell2 = False
             st.session_state.filter_sell3 = False
@@ -924,6 +935,7 @@ if not df_market.empty:
         if st.session_state.filter_buy2:
             st.session_state.filter_buy = False
             st.session_state.filter_buy3 = False
+            st.session_state.filter_buy4 = False
             st.session_state.filter_sell = False
             st.session_state.filter_sell2 = False
             st.session_state.filter_sell3 = False
@@ -932,6 +944,16 @@ if not df_market.empty:
         if st.session_state.filter_buy3:
             st.session_state.filter_buy = False
             st.session_state.filter_buy2 = False
+            st.session_state.filter_buy4 = False
+            st.session_state.filter_sell = False
+            st.session_state.filter_sell2 = False
+            st.session_state.filter_sell3 = False
+            
+    def on_filter_buy4_change():
+        if st.session_state.filter_buy4:
+            st.session_state.filter_buy = False
+            st.session_state.filter_buy2 = False
+            st.session_state.filter_buy3 = False
             st.session_state.filter_sell = False
             st.session_state.filter_sell2 = False
             st.session_state.filter_sell3 = False
@@ -941,6 +963,7 @@ if not df_market.empty:
             st.session_state.filter_buy = False
             st.session_state.filter_buy2 = False
             st.session_state.filter_buy3 = False
+            st.session_state.filter_buy4 = False
             st.session_state.filter_sell2 = False
             st.session_state.filter_sell3 = False
             
@@ -949,6 +972,7 @@ if not df_market.empty:
             st.session_state.filter_buy = False
             st.session_state.filter_buy2 = False
             st.session_state.filter_buy3 = False
+            st.session_state.filter_buy4 = False
             st.session_state.filter_sell = False
             st.session_state.filter_sell3 = False
 
@@ -957,12 +981,14 @@ if not df_market.empty:
             st.session_state.filter_buy = False
             st.session_state.filter_buy2 = False
             st.session_state.filter_buy3 = False
+            st.session_state.filter_buy4 = False
             st.session_state.filter_sell = False
             st.session_state.filter_sell2 = False
             
     st.sidebar.checkbox("Tín hiệu MUA 1 (3 ngày)", key="filter_buy", on_change=on_filter_buy_change)
     st.sidebar.checkbox("Tín hiệu MUA 2 (3 ngày)", key="filter_buy2", on_change=on_filter_buy2_change)
     st.sidebar.checkbox("Tín hiệu MUA 3 (3 ngày)", key="filter_buy3", on_change=on_filter_buy3_change)
+    st.sidebar.checkbox("Tín hiệu MUA 4 (3 ngày)", key="filter_buy4", on_change=on_filter_buy4_change)
     st.sidebar.checkbox("Tín hiệu BÁN 1 (3 ngày)", key="filter_sell", on_change=on_filter_sell_change)
     st.sidebar.checkbox("Tín hiệu BÁN 2 (3 ngày)", key="filter_sell2", on_change=on_filter_sell2_change)
     st.sidebar.checkbox("Tín hiệu BÁN 3 (3 ngày)", key="filter_sell3", on_change=on_filter_sell3_change)
@@ -1075,6 +1101,14 @@ if not df_market.empty:
         else:
             df_market = df_market.iloc[0:0]
             
+    if st.session_state.get("filter_buy4", False):
+        df_buy4 = scan_buy_signals4(target_date_str)
+        if not df_buy4.empty:
+            df_buy4['TH Mua'] = 'Mua 4'
+            df_market = df_market.merge(df_buy4[['Mã CP', 'Ngày', 'TH Mua']].rename(columns={'Ngày': 'Ngày Mua'}), on='Mã CP', how='inner')
+        else:
+            df_market = df_market.iloc[0:0]
+            
     if st.session_state.get("filter_sell3", False):
         df_sell3 = scan_sell_signals3(target_date_str)
         if not df_sell3.empty:
@@ -1137,6 +1171,8 @@ if not df_market.empty:
         active_filters.append(f"Tín hiệu MUA 2 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu MUA 2 (3 ngày)")
     if st.session_state.get("filter_buy3", False):
         active_filters.append(f"Tín hiệu MUA 3 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu MUA 3 (3 ngày)")
+    if st.session_state.get("filter_buy4", False):
+        active_filters.append(f"Tín hiệu MUA 4 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu MUA 4 (3 ngày)")
     if st.session_state.get("filter_sell", False):
         active_filters.append(f"Tín hiệu BÁN 1 (3 ngày trước {target_date_str})" if target_date_str else "Tín hiệu BÁN 1 (3 ngày)")
     if st.session_state.get("filter_sell2", False):

@@ -210,22 +210,69 @@ class SellSignal2(IndicatorMixin, BaseStrategy):
 
 class SellSignal3(IndicatorMixin, BaseStrategy):
     name = "Tín hiệu Bán 3"
-    description = "Gãy nền MA50 hoặc MA20 cắt xuống MA50"
-    
+    description = "Thủng MA50 hoặc MA20 cắt xuống MA50"
+
+    def prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = super().prepare_data(df)
+        if 'ma20' not in df.columns:
+            df['ma20'] = df['close'].rolling(window=20).mean()
+        if 'ma50' not in df.columns:
+            df['ma50'] = df['close'].rolling(window=50).mean()
+        return df
+
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
-        # Bán khi: Giá gãy MA50 (Mất nền giá trung hạn) HOẶC MA20 cắt xuống MA50
-        valid = df['ma20'].notna() & df['ma50'].notna()
-        
-        prev_close = df['close'].shift(1)
-        prev_ma50 = df['ma50'].shift(1)
-        price_break_ma50 = (df['close'] < df['ma50']) & (prev_close >= prev_ma50)
         
         prev_ma20 = df['ma20'].shift(1)
+        prev_ma50 = df['ma50'].shift(1)
+        
+        # 1. Thủng MA50
+        price_cross_down_ma50 = (df['close'] < df['ma50']) & (df['close'].shift(1) >= prev_ma50)
+        
+        # 2. MA20 cắt xuống MA50 (Death Cross)
         ma_cross_down = (df['ma20'] < df['ma50']) & (prev_ma20 >= prev_ma50)
         
+        df['sell_signal'] = price_cross_down_ma50 | ma_cross_down
         df['buy_signal'] = False
-        df['sell_signal'] = valid & (price_break_ma50 | ma_cross_down)
+        return df
+
+
+class BuySignal4(IndicatorMixin, BaseStrategy):
+    name = "Tín hiệu Mua 4"
+    description = "Siêu Breakout (Vượt đỉnh 20 phiên + Vol lớn + MA20>MA50>MA200)"
+    
+    def prepare_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = super().prepare_data(df)
+        if 'ma20' not in df.columns:
+            df['ma20'] = df['close'].rolling(window=20).mean()
+        if 'ma50' not in df.columns:
+            df['ma50'] = df['close'].rolling(window=50).mean()
+        if 'ma200' not in df.columns:
+            df['ma200'] = df['close'].rolling(window=200).mean()
+        if 'vol_ma20' not in df.columns:
+            df['vol_ma20'] = df['volume'].rolling(window=20).mean()
+            
+        # Giá cao nhất 20 phiên trước đó (không tính phiên hiện tại)
+        df['high_20'] = df['high'].rolling(window=20).max().shift(1)
+        return df
+        
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        
+        # 1. Điều kiện xu hướng dài hạn (Uptrend)
+        uptrend = (df['ma20'] > df['ma50']) & (df['ma50'] > df['ma200'])
+        
+        # 2. Breakout vượt đỉnh
+        breakout = df['close'] > df['high_20']
+        
+        # 3. Khối lượng đột biến
+        vol_surge = df['volume'] > 1.5 * df['vol_ma20']
+        
+        df['buy_signal'] = uptrend & breakout & vol_surge
+        
+        # Lọc chỉ lấy điểm mua đầu tiên trong một chuỗi thỏa mãn để tránh mua lặp lại
+        df['buy_signal'] = df['buy_signal'] & ~df['buy_signal'].shift(1).fillna(False)
+        df['sell_signal'] = False
         return df
 
 
@@ -234,9 +281,10 @@ class SellSignal3(IndicatorMixin, BaseStrategy):
 # ==============================================================================
 
 BUY_SIGNAL_REGISTRY = {
-    BuySignal1.name: BuySignal1(),
-    BuySignal2.name: BuySignal2(),
-    BuySignal3.name: BuySignal3()
+    "Tín hiệu Mua 1": BuySignal1(),
+    "Tín hiệu Mua 2": BuySignal2(),
+    "Tín hiệu Mua 3": BuySignal3(),
+    "Tín hiệu Mua 4": BuySignal4()
 }
 
 SELL_SIGNAL_REGISTRY = {
