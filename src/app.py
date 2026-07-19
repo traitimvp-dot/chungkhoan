@@ -52,10 +52,10 @@ def scan_sell_signals3(target_date: str = None):
     return _strategy_mod.get_sell_candidates(days=3, target_date=target_date, sell_method="Tín hiệu Bán 3")
 
 @st.cache_data(ttl=1801, show_spinner="Đang mô phỏng Backtest cho danh sách hiện tại...")
-def run_symbols_backtest(symbols: tuple, buy_method: str, sell_method: str):
+def run_symbols_backtest(symbols: tuple, timeframe: str, buy_method: str, sell_method: str):
     results = []
     for sym in symbols:
-        res = _strategy_mod.run_portfolio_backtest(sym, 100000000, "Tất cả", buy_method, sell_method)
+        res = _strategy_mod.run_portfolio_backtest(sym, 100000000, timeframe, buy_method, sell_method)
         metrics = res.get("metrics")
         if metrics:
             results.append({
@@ -545,7 +545,7 @@ def show_chart_dialog_content(symbol):
         st.markdown("### 🧪 Hệ thống Backtest Mô phỏng")
         col_bt1, col_bt2, col_bt3, col_bt4 = st.columns(4)
         capital = col_bt1.number_input("Số tiền đầu tư (VNĐ)", value=100000000, step=10000000, key=f"bt_cap_{symbol}")
-        bt_timeframe = col_bt2.selectbox("Khoảng thời gian", ["1 Năm", "3 Năm", "5 Năm", "Tất cả"], index=1, key=f"bt_tf_{symbol}")
+        bt_timeframe = col_bt2.selectbox("Khoảng thời gian", ["1 Năm", "2 Năm", "3 Năm", "4 Năm", "5 Năm", "Tất cả"], index=5, key=f"bt_tf_{symbol}")
         bt_buy_method = col_bt3.selectbox("🟢 Tín hiệu Mua", _strategy_mod.get_available_buy_signals(), index=0, key=f"bt_buy_{symbol}")
         bt_sell_method = col_bt4.selectbox("🔴 Tín hiệu Bán", _strategy_mod.get_available_sell_signals(), index=0, key=f"bt_sell_{symbol}")
         
@@ -974,6 +974,9 @@ if not df_market.empty:
         sell_opts = _strategy_mod.get_available_sell_signals()
         st.sidebar.selectbox("Tín hiệu Mua", buy_opts, key="bt_buy_sig", label_visibility="collapsed")
         st.sidebar.selectbox("Tín hiệu Bán", sell_opts, key="bt_sell_sig", label_visibility="collapsed")
+        st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 5px; font-weight: bold;'>Thời gian Backtest</p>", unsafe_allow_html=True)
+        timeframes = ["1 Năm", "2 Năm", "3 Năm", "4 Năm", "5 Năm", "Tất cả"]
+        st.sidebar.selectbox("Thời gian", timeframes, index=5, key="bt_timeframe", label_visibility="collapsed")
 
     if search_query:
         df_market = df_market[df_market["Mã CP"].str.contains(search_query)]
@@ -1083,10 +1086,11 @@ if not df_market.empty:
     if st.session_state.get("filter_strategy", False):
         bt_buy = st.session_state.get("bt_buy_sig")
         bt_sell = st.session_state.get("bt_sell_sig")
+        bt_tf = st.session_state.get("bt_timeframe", "Tất cả")
         if bt_buy and bt_sell:
             current_symbols = tuple(df_market['Mã CP'].tolist())
             if current_symbols:
-                df_bt = run_symbols_backtest(current_symbols, bt_buy, bt_sell)
+                df_bt = run_symbols_backtest(current_symbols, bt_tf, bt_buy, bt_sell)
                 if not df_bt.empty:
                     df_market = df_market.merge(df_bt, on='Mã CP', how='inner')
                     df_market = df_market.sort_values(by="% Lãi/Lỗ", ascending=False)
@@ -1142,7 +1146,8 @@ if not df_market.empty:
     if st.session_state.get("filter_strategy", False):
         bt_buy = st.session_state.get("bt_buy_sig")
         bt_sell = st.session_state.get("bt_sell_sig")
-        active_filters.append(f"Backtest {bt_buy} & {bt_sell}")
+        bt_tf = st.session_state.get("bt_timeframe", "Tất cả")
+        active_filters.append(f"Backtest {bt_buy} & {bt_sell} ({bt_tf})")
         
     if active_filters:
         msg = "🔍 **Đang lọc theo:** " + " | ".join(active_filters)

@@ -457,8 +457,12 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
         df['date'] = pd.to_datetime(df['date'])
         if timeframe == "1 Năm":
             start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=365)
+        elif timeframe == "2 Năm":
+            start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=365*2)
         elif timeframe == "3 Năm":
             start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=365*3)
+        elif timeframe == "4 Năm":
+            start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=365*4)
         elif timeframe == "5 Năm":
             start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=365*5)
         else:
