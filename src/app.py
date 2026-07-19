@@ -118,7 +118,8 @@ def load_market_overview():
                LAG(close, 1) OVER w as prev_close_1,
                LAG(close, 3) OVER w as prev_close_3,
                LAG(close, 7) OVER w as prev_close_7,
-               LAG(close, 22) OVER w as prev_close_1m
+               LAG(close, 22) OVER w as prev_close_1m,
+               AVG(volume) OVER (PARTITION BY symbol ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as vol_ma20
         FROM historical_prices
         WHERE length(symbol) = 3
         WINDOW w AS (PARTITION BY symbol ORDER BY time)
@@ -136,6 +137,7 @@ def load_market_overview():
            round((p.close - p.prev_close_7) / p.prev_close_7 * 100, 2) as "% 7 Ngày",
            round((p.close - p.prev_close_1m) / p.prev_close_1m * 100, 2) as "% 1 Tháng",
            p.volume as "Khối lượng",
+           ROUND(p.vol_ma20, 0) as "KL TB 20 Phiên",
            c."Sàn",
            c."Ngành"
     FROM ordered_prices p
@@ -550,8 +552,12 @@ def show_chart_dialog_content(symbol):
         col_bt1, col_bt2, col_bt3, col_bt4 = st.columns(4)
         capital = col_bt1.number_input("Số tiền đầu tư (VNĐ)", value=100000000, step=10000000, key=f"bt_cap_{symbol}")
         bt_timeframe = col_bt2.selectbox("Khoảng thời gian", ["1 Năm", "2 Năm", "3 Năm", "4 Năm", "5 Năm", "Tất cả"], index=5, key=f"bt_tf_{symbol}")
-        bt_buy_method = col_bt3.selectbox("🟢 Tín hiệu Mua", _strategy_mod.get_available_buy_signals(), index=0, key=f"bt_buy_{symbol}")
-        bt_sell_method = col_bt4.selectbox("🔴 Tín hiệu Bán", _strategy_mod.get_available_sell_signals(), index=0, key=f"bt_sell_{symbol}")
+        buy_sigs = _strategy_mod.get_available_buy_signals()
+        sell_sigs = _strategy_mod.get_available_sell_signals()
+        buy_idx = buy_sigs.index("Tín hiệu Mua 4") if "Tín hiệu Mua 4" in buy_sigs else 0
+        sell_idx = sell_sigs.index("Tín hiệu Bán 2") if "Tín hiệu Bán 2" in sell_sigs else 0
+        bt_buy_method = col_bt3.selectbox("🟢 Tín hiệu Mua", buy_sigs, index=buy_idx, key=f"bt_buy_{symbol}")
+        bt_sell_method = col_bt4.selectbox("🔴 Tín hiệu Bán", sell_sigs, index=sell_idx, key=f"bt_sell_{symbol}")
         
         if st.button("🚀 Chạy Backtest", type="primary", use_container_width=True, key=f"btn_run_bt_{symbol}"):
             with st.spinner("Đang chạy mô phỏng giao dịch..."):
@@ -998,8 +1004,10 @@ if not df_market.empty:
         st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 5px; font-weight: bold;'>Tín hiệu Backtest</p>", unsafe_allow_html=True)
         buy_opts = _strategy_mod.get_available_buy_signals()
         sell_opts = _strategy_mod.get_available_sell_signals()
-        st.sidebar.selectbox("Tín hiệu Mua", buy_opts, key="bt_buy_sig", label_visibility="collapsed")
-        st.sidebar.selectbox("Tín hiệu Bán", sell_opts, key="bt_sell_sig", label_visibility="collapsed")
+        buy_idx = buy_opts.index("Tín hiệu Mua 4") if "Tín hiệu Mua 4" in buy_opts else 0
+        sell_idx = sell_opts.index("Tín hiệu Bán 2") if "Tín hiệu Bán 2" in sell_opts else 0
+        st.sidebar.selectbox("Tín hiệu Mua", buy_opts, index=buy_idx, key="bt_buy_sig", label_visibility="collapsed")
+        st.sidebar.selectbox("Tín hiệu Bán", sell_opts, index=sell_idx, key="bt_sell_sig", label_visibility="collapsed")
         st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 5px; font-weight: bold;'>Thời gian Backtest</p>", unsafe_allow_html=True)
         timeframes = ["1 Năm", "2 Năm", "3 Năm", "4 Năm", "5 Năm", "Tất cả"]
         st.sidebar.selectbox("Thời gian", timeframes, index=5, key="bt_timeframe", label_visibility="collapsed")
@@ -1105,7 +1113,9 @@ if not df_market.empty:
         df_buy4 = scan_buy_signals4(target_date_str)
         if not df_buy4.empty:
             df_buy4['TH Mua'] = 'Mua 4'
-            df_market = df_market.merge(df_buy4[['Mã CP', 'Ngày', 'TH Mua']].rename(columns={'Ngày': 'Ngày Mua'}), on='Mã CP', how='inner')
+            df_buy4['Sức mạnh Breakout'] = df_buy4['Vol/Avg20']
+            df_market = df_market.merge(df_buy4[['Mã CP', 'Ngày', 'TH Mua', 'Sức mạnh Breakout']].rename(columns={'Ngày': 'Ngày Mua'}), on='Mã CP', how='inner')
+            df_market = df_market.sort_values(by='Sức mạnh Breakout', ascending=False)
         else:
             df_market = df_market.iloc[0:0]
             
@@ -1193,6 +1203,8 @@ if not df_market.empty:
             msg += " | 🟢 **Tín hiệu Mua 2:** MA20 cắt lên MA50 (Golden Cross)"
         if st.session_state.get("filter_buy3", False):
             msg += " | 🟢 **Tín hiệu Mua 3:** Pullback MAs (Thuận thế 3 MA)"
+        if st.session_state.get("filter_buy4", False):
+            msg += " | 🟢 **Tín hiệu Mua 4:** Siêu Breakout (Vượt đỉnh 20 phiên + Vol lớn + MA20>MA50>MA200)"
         if st.session_state.get("filter_sell", False):
             msg += " | 🔴 **Tín hiệu Bán 1:** Gãy MA20/MA50, MACD cắt xuống, hoặc RSI > 70 kèm Vol xả"
         if st.session_state.get("filter_sell2", False):
@@ -1212,7 +1224,9 @@ if not df_market.empty:
         selection_mode="single-row",
         height=600,
         column_config={
-            "Khối lượng": st.column_config.NumberColumn(format="%,d")
+            "Khối lượng": st.column_config.NumberColumn(format="%,d"),
+            "KL TB 20 Phiên": st.column_config.NumberColumn(format="%,d"),
+            "Sức mạnh Breakout": st.column_config.NumberColumn(format="%.1fx", help="Tỷ lệ Đột biến Khối lượng so với trung bình 20 phiên. Càng cao càng mạnh.")
         }
     )
     
