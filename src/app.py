@@ -79,8 +79,8 @@ get_buy_candidates = _strategy_mod.get_buy_candidates
 get_sell_candidates = _strategy_mod.get_sell_candidates
 
 @st.cache_data(ttl=1801, show_spinner="Đang quét toàn thời gian (tốn vài giây đến 1 phút)...")
-def run_historical_signals(symbols: tuple, buy_method: str):
-    return _strategy_mod.get_historical_signals(list(symbols), buy_method)
+def run_historical_signals(symbols: tuple, method: str, is_buy: bool = True):
+    return _strategy_mod.get_historical_signals(list(symbols), method, is_buy)
 
 # ==============================================================================
 # WATCHLIST — Lưu vào file JSON trong thư mục data/
@@ -1247,18 +1247,21 @@ if not df_market.empty:
         buy_opts = _strategy_mod.get_available_buy_signals()
         sell_opts = _strategy_mod.get_available_sell_signals()
         
-        col1, col2, col3 = st.columns(3)
+        all_opts = [f"Mua - {opt}" for opt in buy_opts] + [f"Bán - {opt}" for opt in sell_opts]
+        
+        col1, col2 = st.columns(2)
         with col1:
-            buy_sig = st.selectbox("Tín hiệu Mua", buy_opts, key="chart_buy_sig")
+            selected_sig = st.selectbox("Tín hiệu", all_opts, key="chart_sig")
         with col2:
-            sell_sig = st.selectbox("Tín hiệu Bán", sell_opts, key="chart_sell_sig")
-        with col3:
             time_range = st.selectbox("Khoảng thời gian", ["Tất cả", "1 năm", "2 năm", "3 năm", "4 năm", "5 năm"], key="chart_time")
             
         if st.button("🚀 Vẽ biểu đồ (Quét toàn bộ lịch sử)"):
             if not df_market.empty:
                 symbols = tuple(df_market['Mã CP'].tolist())
-                df_points = run_historical_signals(symbols, buy_sig)
+                is_buy = selected_sig.startswith("Mua - ")
+                method = selected_sig.split(" - ", 1)[1]
+                
+                df_points = run_historical_signals(symbols, method, is_buy)
                 
                 if not df_points.empty:
                     df_points['Ngày'] = pd.to_datetime(df_points['Ngày'], format='%d/%m/%Y')
@@ -1271,8 +1274,9 @@ if not df_market.empty:
                         df_grouped = df_points.groupby(['Ngày', 'Ngành']).size().reset_index(name='Số lượng')
                         
                         import plotly.express as px
+                        point_type = "mua" if is_buy else "bán"
                         fig = px.line(df_grouped, x='Ngày', y='Số lượng', color='Ngành',
-                                      title=f"Số lượng điểm mua theo Ngành ({buy_sig})")
+                                      title=f"Số lượng điểm {point_type} theo Ngành ({selected_sig})")
                         min_date = df_grouped['Ngày'].min()
                         max_date = df_grouped['Ngày'].max()
                         date_range = pd.date_range(start=min_date.replace(day=1), end=max_date, freq='MS')

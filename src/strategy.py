@@ -618,7 +618,7 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
         "df_chart": df_chart
     }
 
-def get_historical_signals(symbols: list, buy_method: str) -> pd.DataFrame:
+def get_historical_signals(symbols: list, method: str, is_buy: bool = True) -> pd.DataFrame:
     """Quét tín hiệu toàn thời gian cho một danh sách mã."""
     if not symbols:
         return pd.DataFrame()
@@ -642,7 +642,7 @@ def get_historical_signals(symbols: list, buy_method: str) -> pd.DataFrame:
     con.close()
 
     candidates = []
-    strategy = get_buy_signal(buy_method)
+    strategy = get_buy_signal(method) if is_buy else get_sell_signal(method)
 
     for symbol, grp in df_raw.groupby('symbol'):
         grp = grp.sort_values('date').reset_index(drop=True)
@@ -652,16 +652,16 @@ def get_historical_signals(symbols: list, buy_method: str) -> pd.DataFrame:
         grp = strategy.prepare_data(grp)
         grp = strategy.generate_signals(grp)
         
-        buy_events = grp[grp['buy_signal']]
+        events = grp[grp['buy_signal']] if is_buy else grp[grp['sell_signal']]
         
-        if buy_events.empty:
+        if events.empty:
             continue
             
         info_row = df_info[df_info['Mã CP'] == symbol]
         san = info_row['Sàn'].values[0] if not info_row.empty else "N/A"
         nganh = info_row['Ngành'].values[0] if not info_row.empty else "N/A"
         
-        for _, row in buy_events.iterrows():
+        for _, row in events.iterrows():
             candidates.append({
                 "Ngày": pd.to_datetime(row['date']).strftime('%d/%m/%Y'),
                 "Mã CP": symbol,
