@@ -617,3 +617,57 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
         "trades": df_trades,
         "df_chart": df_chart
     }
+
+def get_historical_signals(symbols: list, buy_method: str) -> pd.DataFrame:
+    """Quét tín hiệu toàn thời gian cho một danh sách mã."""
+    if not symbols:
+        return pd.DataFrame()
+        
+    con = duckdb.connect(DB_PATH, read_only=True)
+    sym_list = "', '".join(symbols)
+    
+    # Chia nhỏ list nếu quá dài (DuckDB IN clause có giới hạn, nhưng vài trăm mã thì OK)
+    df_raw = con.execute(f"""
+        SELECT symbol, time::DATE as date, close, volume, high, low, open
+        FROM historical_prices
+        WHERE symbol IN ('{sym_list}')
+        ORDER BY symbol, time
+    """).df()
+    
+    try:
+        df_info = con.execute("SELECT * FROM company_info").df()
+    except Exception:
+        df_info = pd.DataFrame(columns=['Mã CP', 'Sàn', 'Ngành'])
+        
+    con.close()
+
+    candidates = []
+    strategy = get_buy_signal(buy_method)
+
+    for symbol, grp in df_raw.groupby('symbol'):
+        grp = grp.sort_values('date').reset_index(drop=True)
+        if len(grp) < 50:
+            continue
+
+        grp = strategy.prepare_data(grp)
+        grp = strategy.generate_signals(grp)
+        
+        buy_events = grp[grp['buy_signal']]
+        
+        if buy_events.empty:
+            continue
+            
+        info_row = df_info[df_info['Mã CP'] == symbol]
+        san = info_row['Sàn'].values[0] if not info_row.empty else "N/A"
+        nganh = info_row['Ngành'].values[0] if not info_row.empty else "N/A"
+        
+        for _, row in buy_events.iterrows():
+            candidates.append({
+                "Ngày": pd.to_datetime(row['date']).strftime('%d/%m/%Y'),
+                "Mã CP": symbol,
+                "Sàn": san,
+                "Ngành": nganh
+            })
+
+    df_candidates = pd.DataFrame(candidates)
+    return df_candidates

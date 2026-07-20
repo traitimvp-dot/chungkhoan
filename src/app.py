@@ -78,6 +78,10 @@ def run_symbols_backtest(symbols: tuple, timeframe: str, buy_method: str, sell_m
 get_buy_candidates = _strategy_mod.get_buy_candidates
 get_sell_candidates = _strategy_mod.get_sell_candidates
 
+@st.cache_data(ttl=1801, show_spinner="Đang quét toàn thời gian (tốn vài giây đến 1 phút)...")
+def run_historical_signals(symbols: tuple, buy_method: str):
+    return _strategy_mod.get_historical_signals(list(symbols), buy_method)
+
 # ==============================================================================
 # WATCHLIST — Lưu vào file JSON trong thư mục data/
 # ==============================================================================
@@ -1214,25 +1218,86 @@ if not df_market.empty:
         if st.session_state.get("filter_sell3", False):
             msg += " | 🔴 **Tín hiệu Bán 3:** Gãy nền MA50 hoặc MA20 cắt xuống MA50"
         st.info(msg)
-    else:
-        st.markdown("💡 *Bấm vào một dòng bất kỳ để xem biểu đồ kỹ thuật chi tiết*")
-    
-    # Custom styling for % Thay đổi (optional, but requested by user if we could, we can just use dataframe default formatting)
-    event = st.dataframe(
-        df_market,
-        use_container_width=True,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        height=600,
-        column_config={
-            "Khối lượng": st.column_config.NumberColumn(format="%,d"),
-            "KL TB 20 Phiên": st.column_config.NumberColumn(format="%,d"),
-            "Sức mạnh Breakout": st.column_config.NumberColumn(format="%.1fx", help="Tỷ lệ Đột biến Khối lượng so với trung bình 20 phiên. Càng cao càng mạnh.")
-        }
-    )
-    
-    st.caption(f"**Tổng số:** {len(df_market)} bản ghi")
+
+    tab_main, tab_chart = st.tabs(["📋 Kết quả tra cứu", "📊 Biểu đồ tổng hợp"])
+
+    with tab_main:
+        if not active_filters:
+            st.markdown("💡 *Bấm vào một dòng bất kỳ để xem biểu đồ kỹ thuật chi tiết*")
+            
+        event = st.dataframe(
+            df_market,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            height=600,
+            column_config={
+                "Khối lượng": st.column_config.NumberColumn(format="%,d"),
+                "KL TB 20 Phiên": st.column_config.NumberColumn(format="%,d"),
+                "Sức mạnh Breakout": st.column_config.NumberColumn(format="%.1fx", help="Tỷ lệ Đột biến Khối lượng so với trung bình 20 phiên. Càng cao càng mạnh.")
+            }
+        )
+        
+        st.caption(f"**Tổng số:** {len(df_market)} bản ghi")
+
+    with tab_chart:
+        st.markdown("### 📈 Biểu đồ Điểm mua Toàn thời gian")
+        
+        buy_opts = _strategy_mod.get_available_buy_signals()
+        sell_opts = _strategy_mod.get_available_sell_signals()
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            buy_sig = st.selectbox("Tín hiệu Mua", buy_opts, key="chart_buy_sig")
+        with col2:
+            sell_sig = st.selectbox("Tín hiệu Bán", sell_opts, key="chart_sell_sig")
+        with col3:
+            time_range = st.selectbox("Khoảng thời gian", ["Tất cả", "1 năm", "2 năm", "3 năm", "4 năm", "5 năm"], key="chart_time")
+            
+        if st.button("🚀 Vẽ biểu đồ (Quét toàn bộ lịch sử)"):
+            if not df_market.empty:
+                symbols = tuple(df_market['Mã CP'].tolist())
+                df_points = run_historical_signals(symbols, buy_sig)
+                
+                if not df_points.empty:
+                    df_points['Ngày'] = pd.to_datetime(df_points['Ngày'], format='%d/%m/%Y')
+                    if time_range != "Tất cả":
+                        years = int(time_range.split()[0])
+                        start_date = pd.Timestamp.now() - pd.DateOffset(years=years)
+                        df_points = df_points[df_points['Ngày'] >= start_date]
+                        
+                    if not df_points.empty:
+                        df_grouped = df_points.groupby(['Ngày', 'Ngành']).size().reset_index(name='Số lượng')
+                        
+                        import plotly.express as px
+                        fig = px.line(df_grouped, x='Ngày', y='Số lượng', color='Ngành',
+                                      title=f"Số lượng điểm mua theo Ngành ({buy_sig})")
+                        min_date = df_grouped['Ngày'].min()
+                        max_date = df_grouped['Ngày'].max()
+                        date_range = pd.date_range(start=min_date.replace(day=1), end=max_date, freq='MS')
+                        
+                        tickvals = []
+                        ticktext = []
+                        for d in date_range:
+                            tickvals.append(d)
+                            if d.month == 1:
+                                ticktext.append(d.strftime('%Y'))
+                            else:
+                                ticktext.append(str(d.month))
+                                
+                        fig.update_xaxes(
+                            tickmode='array',
+                            tickvals=tickvals,
+                            ticktext=ticktext
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info(f"Không có dữ liệu điểm mua trong khoảng thời gian {time_range}.")
+                else:
+                    st.info("Không tìm thấy điểm mua nào.")
+            else:
+                st.warning("Danh sách mã cổ phiếu đang rỗng. Vui lòng tắt bớt bộ lọc.")
     
     if event.selection.rows:
         selected_idx = event.selection.rows[0]
