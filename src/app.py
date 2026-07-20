@@ -734,8 +734,10 @@ def show_chart_dialog_content(symbol):
                         use_container_width=True, 
                         hide_index=True,
                         column_config={
-                            "Giá Mua": st.column_config.NumberColumn(format="%,.0f"),
-                            "Giá Bán": st.column_config.NumberColumn(format="%,.0f"),
+                            "Ngày Mua": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                            "Ngày Bán": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                            "Giá Mua": st.column_config.NumberColumn(format="%,.2f"),
+                            "Giá Bán": st.column_config.NumberColumn(format="%,.2f"),
                             "Khối lượng": st.column_config.NumberColumn(format="%,d"),
                             "Tiền Lãi/Lỗ": st.column_config.NumberColumn(format="%,.0f"),
                             "Lãi/Lỗ (%)": st.column_config.NumberColumn(format="%.2f%%")
@@ -1064,7 +1066,7 @@ if not df_market.empty:
             
     if st.session_state.filter_date:
         st.sidebar.markdown("<p style='margin-bottom: 0px; margin-top: 10px; font-weight: bold;'>Chọn ngày quá khứ</p>", unsafe_allow_html=True)
-        target_date = st.sidebar.date_input("Chọn ngày", value=st.session_state.max_date, max_value=st.session_state.max_date, key="target_date_picker", label_visibility="collapsed")
+        target_date = st.sidebar.date_input("Chọn ngày", value=st.session_state.max_date, max_value=st.session_state.max_date, format="DD/MM/YYYY", key="target_date_picker", label_visibility="collapsed")
         target_date_str = target_date.strftime("%Y-%m-%d")
     else:
         target_date_str = None
