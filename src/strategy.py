@@ -500,7 +500,8 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
     df_sell = sell_strategy.generate_signals(df.copy())
     df['sell_signal'] = df_sell['sell_signal']
     
-    # Lọc lại data theo timeframe thực tế hiển thị
+    # Lọc lại data theo timeframe thực tế hiển thị (chỉ dùng để lấy start_date lọc trades sau này)
+    start_date = pd.Timestamp.min
     if timeframe != "Tất cả":
         df['date'] = pd.to_datetime(df['date'])
         if timeframe == "1 Năm":
@@ -515,15 +516,12 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
             start_date = pd.Timestamp.now().normalize() - pd.Timedelta(days=365*5)
         else:
             start_date = df['date'].min()
-        df = df[df['date'] >= start_date].copy()
 
-    # 3. Vòng lặp giao dịch (Execution Engine)
-    capital = initial_capital
+    # 3. Vòng lặp giao dịch (Execution Engine) TRÊN TOÀN BỘ DỮ LIỆU
     in_position = False
     buy_price = 0
     buy_date = None
-    shares = 0
-    trades = []
+    all_trades = []
     
     days_held = 0
     
@@ -540,8 +538,6 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
                 in_position = True
                 buy_price = row['close']
                 buy_date = row['date']
-                shares = int(capital // buy_price)
-                capital -= (shares * buy_price)
                 days_held = 0
                 
         # BÁN
@@ -551,47 +547,47 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
                 if row['sell_signal']:
                     sell_price = row['close']
                     sell_date = row['date']
-                    capital += (shares * sell_price)
                     
-                    profit = (sell_price - buy_price) * shares
-                    profit_pct = (sell_price - buy_price) / buy_price * 100
-                    
-                    trades.append({
+                    all_trades.append({
                         "Ngày Mua": buy_date,
                         "Giá Mua": buy_price,
-                        "Khối lượng": shares,
                         "Ngày Bán": sell_date,
                         "Giá Bán": sell_price,
-                        "Lãi/Lỗ (%)": round(profit_pct, 2),
-                        "Tiền Lãi/Lỗ": int(profit)
+                        "Lãi/Lỗ (%)": round((sell_price - buy_price) / buy_price * 100, 2)
                     })
                     
                     in_position = False
-                    shares = 0
 
     # Tự động chốt nếu còn cầm cổ phiếu cuối kỳ
     if in_position:
         sell_price = df.iloc[-1]['close']
         sell_date = df.iloc[-1]['date']
-        capital += (shares * sell_price)
-        
-        profit = (sell_price - buy_price) * shares
-        profit_pct = (sell_price - buy_price) / buy_price * 100
-        
-        trades.append({
+        all_trades.append({
             "Ngày Mua": buy_date,
             "Giá Mua": buy_price,
-            "Khối lượng": shares,
             "Ngày Bán": sell_date,
             "Giá Bán": sell_price,
-            "Lãi/Lỗ (%)": round(profit_pct, 2),
-            "Tiền Lãi/Lỗ": int(profit)
+            "Lãi/Lỗ (%)": round((sell_price - buy_price) / buy_price * 100, 2)
         })
-        in_position = False
-        shares = 0
 
-    # 4. Tính metrics
-    df_trades = pd.DataFrame(trades)
+    # 4. Lọc các trade thuộc timeframe và tính toán lại vốn (Capital Compounding)
+    capital = initial_capital
+    filtered_trades = []
+    for t in all_trades:
+        # Nếu điểm mua thuộc timeframe thì mới tính
+        if pd.to_datetime(t["Ngày Mua"]) >= start_date:
+            buy_p = t["Giá Mua"]
+            sell_p = t["Giá Bán"]
+            shares = int(capital // buy_p)
+            capital -= (shares * buy_p)
+            capital += (shares * sell_p)
+            profit = (sell_p - buy_p) * shares
+            
+            t["Khối lượng"] = shares
+            t["Tiền Lãi/Lỗ"] = int(profit)
+            filtered_trades.append(t)
+
+    df_trades = pd.DataFrame(filtered_trades)
     
     if not df_trades.empty:
         total_trades = len(df_trades)
@@ -613,8 +609,11 @@ def run_portfolio_backtest(symbol: str, initial_capital: float, timeframe: str,
         "win_rate": win_rate
     }
     
+    # Chỉ trả về chart data từ start_date để hiển thị
+    df_chart = df[pd.to_datetime(df['date']) >= start_date].copy() if timeframe != "Tất cả" else df
+    
     return {
         "metrics": metrics, 
         "trades": df_trades,
-        "df_chart": df  # Trả về cả df kỹ thuật để biểu diễn chart trực quan
+        "df_chart": df_chart
     }
